@@ -1,0 +1,219 @@
+---
+date: "2018-10-23"
+title: Install Keycloak on CentOS 7 with MySQL backend
+slug: install-keycloak-on-centos-7-with-mysql-backend
+tags:
+- centos
+- keycloak
+- mysql
+summary: "Keycloak is an open source Identity and Access Management solution aimed at modern applications and services. It makes it easy to secure applications and services with little to no code. I'm using Keycloak as an Identity Broker and have multiple Active Directories added to Keycloak."
+---
+<p>Keycloak is an open source Identity and Access Management solution we're going to install on a CentOS 7 machine. The Keycloak application including the MySQL server requires at least 2 CPU cores and 2 GB of memory. It's recommended to have 4 GB memory when you're going to have a lot of traffic to this identity server.</p>
+
+<h2>Install Keycloak</h2>
+
+<p>Keycloak is based on <a href="http://wildfly.org/about/">Wildfly</a> and requires Java 8. We're using the YUM package manager to install all required dependencies.</p>
+
+<pre>
+<code class="language-bash">$ yum install java-1.8.0-openjdk</code></pre>
+
+<p>We're going to run the Keycloak application with user 'keycloak'. Add the user and group to your machine.</p>
+
+<pre>
+<code class="language-bash">$ groupadd -r keycloak
+$ useradd -m -d /var/lib/keycloak -s /sbin/nologin -r -g keycloak keycloak</code></pre>
+
+<p>Keycloak doesn't provide a RPM so we're going to install it manually. In this blog post I'm using the following paths:</p>
+
+<ul>
+	<li>Base path: <em>/opt/keycloak</em></li>
+	<li>Application path: <em>/opt/keycloak/current</em></li>
+</ul>
+
+<p>The application path is a symlink to a specific version. This simplifies the upgrade process in the future.</p>
+
+<p>Go to the <a href="https://www.keycloak.org/downloads.html" rel="nofollow">download page of Keycloak</a> and get the URL of the latest final version. Download the final Keycloak version from the website and extract it into <em>/opt/keycloak/$version</em>. Use a symlink to link Keycloak to <em>/opt/keycloak/current</em>.</p>
+
+<pre>
+<code class="language-bash">$ curl https://downloads.jboss.org/keycloak/4.5.0.Final/keycloak-4.5.0.Final.tar.gz -o keycloak.tar.gz
+$ mkdir -p /opt/keycloak/4.5.0
+$ ln -s /opt/keycloak/4.5.0 /opt/keycloak/current
+$ tar -xzf keycloak.tar.gz -C /opt/keycloak/current --strip-components=1
+$ chown keycloak: -R /opt/keycloak</code></pre>
+
+<p>Limit access to <em>standalone</em> file because it contains sensitive data.</p>
+
+<pre>
+<code class="language-bash">$ cd /opt/keycloak/current
+$ sudo -u keycloak chmod 700 standalone</code></pre>
+
+<p>We're going to run Keycloak on MySQL instead of the default H2 database. First, install the MySQL Yum repository.</p>
+
+<pre>
+<code class="language-bash">$ yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-1.noarch.rpm</code></pre>
+
+<p>This will install the MySQL repository with the MySQL 8.0 repository enabled by default. Because Keycloak doesn't support MySQL 8.0 yet, disable the MySQL 8.0 repository and enable the MySQL 5.7 repository.</p>
+
+<pre>
+<code class="language-bash">$ yum-config-manager --disable mysql80-community
+$ yum-config-manager --enable mysql57-community</code></pre>
+
+<p>Install and start the MySQL server.</p>
+
+<pre>
+<code class="language-bash">$ yum install mysql-server
+$ systemctl start mysqld</code></pre>
+
+<p>The MySQL server generates a temporary password which can be found in the log file located in the <em>/var/log </em>directory. Change this temporary password to something else before proceeding.</p>
+
+<pre>
+<code class="language-bash">$ mysqladmin -p password</code></pre>
+
+<p>Save the MySQL credentials in the home directory of the root user.</p>
+
+<pre>
+<code class="language-bash">$ cat &gt; /root/.my.cnf &lt;&lt;EOF
+[client]
+user=root
+password="YOURPASS"
+EOF</code></pre>
+
+<p>Create a database and user account for Keycloak (change YOURPASS to your something random).</p>
+
+<pre>
+<code class="language-bash">$ mysql
+ 
+mysql$ CREATE DATABASE keycloak;
+mysql$ CREATE USER 'keycloak'@'localhost' IDENTIFIED BY 'YOURPASS';
+mysql$ GRANT ALL PRIVILEGES ON keycloak.* TO 'keycloak'@'localhost';
+mysql$ FLUSH PRIVILEGES;
+mysql$ exit;</code></pre>
+
+<p>Configure Keycloak to use MySQL. Download the MySQL connector for Java.</p>
+
+<pre>
+<code class="language-bash">$ curl -L http://central.maven.org/maven2/mysql/mysql-connector-java/5.1.46/mysql-connector-java-5.1.46.jar -o /root/mysql-connector-java-5.1.46.jar</code></pre>
+
+<p>Open the Jboss CLI and add the MySQL module (you don't have to connect with the Jboss websocket).</p>
+
+<pre>
+<code class="language-bash">$ ./bin/jboss-cli.sh
+ 
+jboss-cli$ module add --name=org.mysql  --dependencies=javax.api,javax.transaction.api --resources=/root/mysql-connector-java-5.1.46.jar
+jboss-cli$ exit</code></pre>
+
+<p>Add the MySQL driver to the configuration.</p>
+
+<pre>
+<code class="language-bash">$ sudo -u keycloak ./bin/jboss-cli.sh 'embed-server,/subsystem=datasources/jdbc-driver=mysql:add(driver-name=mysql,driver-module-name=org.mysql,driver-class-name=com.mysql.jdbc.Driver)'
+</code></pre>
+
+<p>Remove the h2 KeycloakDS data source and add the MySQL KeycloakDS data source. (Don't delete the test database and change YOURPASS to something random)</p>
+
+<pre>
+<code class="language-bash">$ sudo -u keycloak ./bin/jboss-cli.sh 'embed-server,/subsystem=datasources/data-source=KeycloakDS:remove'
+$ sudo -u keycloak ./bin/jboss-cli.sh 'embed-server,/subsystem=datasources/data-source=KeycloakDS:add(driver-name=mysql,enabled=true,use-java-context=true,connection-url="jdbc:mysql://localhost:3306/keycloak?useSSL=false&amp;amp;useLegacyDatetimeCode=false&amp;amp;serverTimezone=Europe/Amsterdam&amp;amp;characterEncoding=UTF-8",jndi-name="java:/jboss/datasources/KeycloakDS",user-name=keycloak,password="YOURPASS",valid-connection-checker-class-name=org.jboss.jca.adapters.jdbc.extensions.mysql.MySQLValidConnectionChecker,validate-on-match=true,exception-sorter-class-name=org.jboss.jca.adapters.jdbc.extensions.mysql.MySQLValidConnectionChecker)'</code></pre>
+
+<p>Add management user to keycloak (change YOURPASS to your something random).</p>
+
+<pre>
+<code class="language-bash">$ sudo -u keycloak ./bin/add-user-keycloak.sh -u admin -p YOURPASS -r master
+ 
+# output: Added 'admin' to '/opt/keycloak/4.5.0/standalone/configuration/keycloak-add-user.json', restart server to load user</code></pre>
+
+<p>We're going to run Keycloak behind a Nginx reverse proxy. To allow this, change http-listener and socket-binding configurations in Keycloak.</p>
+
+<pre>
+<code class="language-bash">$ sudo -u keycloak ./bin/jboss-cli.sh 'embed-server,/subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=proxy-address-forwarding,value=true)'
+$ sudo -u keycloak ./bin/jboss-cli.sh 'embed-server,/socket-binding-group=standard-sockets/socket-binding=proxy-https:add(port=443)'
+$ sudo -u keycloak ./bin/jboss-cli.sh 'embed-server,/subsystem=undertow/server=default-server/http-listener=default:write-attribute(name=redirect-socket,value=proxy-https)'</code></pre>
+
+<p>Create a systemd configuration to start and stop keycloak using systemd.</p>
+
+<pre>
+<code class="language-bash">cat &gt; /etc/systemd/system/keycloak.service &lt;&lt;EOF
+ 
+[Unit]
+Description=Keycloak
+After=network.target
+ 
+[Service]
+Type=idle
+User=keycloak
+Group=keycloak
+ExecStart=/opt/keycloak/current/bin/standalone.sh -b 0.0.0.0
+TimeoutStartSec=600
+TimeoutStopSec=600
+ 
+[Install]
+WantedBy=multi-user.target
+EOF</code></pre>
+
+<p>Reload the systemd daemon and start Keycloak.</p>
+
+<pre>
+<code class="language-bash">$ systemctl daemon-reload
+$ systemctl enable keycloak
+$ systemctl start keycloak</code></pre>
+
+<p>Now, we'll install the Nginx server to do SSL termination for our Keycloak application. Install Nginx using the YUM package manager.</p>
+
+<pre>
+<code class="language-bash">$ yum install nginx</code></pre>
+
+<p>Copy the SSL certificates to the following paths on the server:</p>
+
+<ul>
+	<li>Certificate: <em>/etc/pki/tls/certs/</em></li>
+	<li>Private key:<em> /etc/pki/tls/private/</em></li>
+</ul>
+
+<p>Configure Nginx to proxy traffic for Keycloak. (Change my.url.com to your own URL)</p>
+
+<pre>
+<code class="language-bash">cat &gt; /etc/nginx/conf.d/keycloak.conf &lt;&lt;EOF
+upstream keycloak {
+    # Use IP Hash for session persistence
+    ip_hash;
+  
+    # List of Keycloak servers
+    server 127.0.0.1:8080;
+}
+  
+      
+server {
+    listen 80;
+    server_name my.url.com;
+ 
+    # Redirect all HTTP to HTTPS
+    location / {   
+      return 301 https://\$server_name\$request_uri;
+    }
+}
+  
+server {
+    listen 443 ssl http2;
+    server_name my.url.com;
+ 
+    ssl_certificate /etc/pki/tls/certs/my-cert.cer;
+    ssl_certificate_key /etc/pki/tls/private/my-key.key;
+    ssl_session_cache shared:SSL:1m;
+    ssl_prefer_server_ciphers on;
+ 
+    location / {
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_pass http://keycloak;
+    }
+}
+EOF</code></pre>
+
+<p>Enable and start Nginx.</p>
+
+<pre>
+<code class="language-bash">$ systemctl enable nginx
+$ systemctl start nginx</code></pre>
+
+<p>Open port 80 and 443 in your firewall and you're done!</p>

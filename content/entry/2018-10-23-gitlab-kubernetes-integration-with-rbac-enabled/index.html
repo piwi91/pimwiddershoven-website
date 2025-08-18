@@ -1,0 +1,91 @@
+---
+date: "2018-10-23"
+title: GitLab Kubernetes Integration with RBAC enabled
+slug: gitlab-kubernetes-integration-with-rbac-enabled
+tags:
+- gitlab
+- kubernetes
+summary: "Officially, GitLab doesn't support RBAC enabled Kubernetes clusters yet, but with some manual configuration, it is possible to integrate your Kubernetes cluster into Gitlab with RBAC enabled."
+---
+<p><strong>Caution:</strong> The configurations in this blog post adds cluster administrative access to your GitLab server. Unfortunately, GitLab 11 needs this access to query the cluster and install applications on it.</p>
+
+<h2>Create the gitlab-managed-apps namespace</h2>
+
+<p>GitLab uses the gitlab-managed-apps namespace as its default namespace.</p>
+
+<pre>
+<code class="language-bash">$ kubectl create ns gitlab-managed-apps</code></pre>
+
+<h2>Add a service account</h2>
+
+<p>We're going to use a service account to let GitLab authenticate with our cluster. We're creating this service account in the gitlab-managed-apps namespace.</p>
+
+<pre>
+<code class="language-bash">$ kubectl -n gitlab-managed-apps create serviceaccount gitlab</code></pre>
+
+<h2>Add Cluster and ClusterRole bindings</h2>
+
+<p>The configuration below binds the cluster-admin ClusterRole to the gitlab service account and the "kubernetes" user (used by GitLab, probably hardcoded somewhere?).</p>
+
+<pre>
+<code class="language-bash">$ cat &lt;&lt;EOF | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gitlab-sa
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: gitlab
+  namespace: gitlab-managed-apps
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: kubernetes
+EOF</code></pre>
+
+<h2>Create a role binding in the gitlab-managed-apps namespace</h2>
+
+<p>The configuration below binds the admin ClusterRole to the gitlab service account and the default service account in the gitlab-managed-apps namespace.</p>
+
+<pre>
+<code class="language-bash">$ cat &lt;&lt;EOF | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gitlab-binding
+  namespace: gitlab-managed-apps
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+- kind: ServiceAccount
+  name: gitlab
+  namespace: gitlab-managed-apps
+- kind: ServiceAccount
+  name: default
+  namespace: gitlab-managed-apps
+EOF</code></pre>
+
+<h2>Get the token from the service account</h2>
+
+<p>GitLab needs a token to authenticate with your Kubernetes cluster. Kubernetes already generated a token when you added the service account and stored it into a secret.</p>
+
+<pre>
+<code class="language-bash">$ kubectl -n gitlab-managed-apps describe serviceaccount gitlab</code></pre>
+
+<p>Copy the secret name and use it to retrieve the token.</p>
+
+<pre>
+<code class="language-bash">$ kubectl -n gitlab-managed-apps get secret &lt;secret name&gt;</code></pre>
+
+<h2>Configure GitLab</h2>
+
+<p>As documented on the <a href="https://docs.gitlab.com/ce/user/project/clusters/index.html" target="_blank">GitLab website</a>.</p>
+
+<h2>Done :)</h2>
+
+<p>Now it's possible to install GitLab applications on your RBAC enabled Kubernetes cluster!</p>

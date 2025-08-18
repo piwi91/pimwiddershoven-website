@@ -1,0 +1,177 @@
+---
+date: "2019-11-28"
+title: Deploy Kubernetes Cluster with Rancher Kubernetes Engine (RKE)
+slug: deploy-kubernetes-cluster-with-rancher-kubernetes-engine-rke
+tags:
+- kubernetes
+- rancher
+- rke
+summary: "In this blog post, I'll explain how you deploy a brand new Kubernetes Cluster with Rancher Kubernetes Engine (RKE). Rancher Kubernetes Engine doesn't include the Rancher management application itself and will deploy a vanilla Kubernetes Cluster for you, the exact same thing as kubeadm can do for you but much more simple!"
+---
+<p>I guess you already know what Kubernetes is, if not I'll quote from the kubernetes.io website: "Kubernetes is a Production-Grade Container Orchestration for Automated container deployment, scaling, and management".</p>
+
+<p>Rancher Kubernetes Engine, or in short RKE, is a CNCF-certified Kubernetes distribution that runs entirely in Docker containers. The only dependency is that you need to have the Docker daemon installed, all the rest is solved by RKE.</p>
+
+<p>In this blog post, we're going to set up a Kubernetes test environment using Rancher Kubernetes Engine.</p>
+
+<h2>Infrastructure</h2>
+
+<p>You can deploy a Kubernetes Cluster with RKE on bare-metal servers or virtualized servers. The only requirement is that you have to install the Docker daemon on this server. For this blog post, I use an OpenStack project and deploy 4 nodes in 3 availability zones. Some configurations are OpenStack specific, if this is the case I'll mention this so you can check if you need this in your setup.</p>
+
+<p>In RKE you can configure three types of roles:</p>
+
+<ul>
+	<li><strong>Controlplane</strong>: a Kubernetes "master" node. Nodes with the controlplane role are hosting the Kubernetes core components: kube-apiserver, kube-controller-manager, and kube-scheduler.</li>
+	<li><strong>Etcd</strong>: a Kubernetes storage node. In most cases, the controlplane and etcd nodes are combined nodes (so one node with two roles).</li>
+	<li><strong>Worker</strong>: a Kubernetes worker node. This node will run all kinds of workloads you deploy to your Kubernetes Cluster.</li>
+</ul>
+
+<p>In this example, I deploy one "master" node (controlplane + etcd role) and three worker nodes. The master node is deployed in the availability zone "AZ-1" and the three worker nodes are deployed in the availability zones "AZ-1", "AZ-2" and "AZ-3". The main reason behind using multiple availability zones is that you can really deploy high-available workloads across multiple data centers.</p>
+
+<p>The minimal requirements for these nodes are:</p>
+
+<ul>
+	<li><strong>Controlplane/Etcd</strong>: 2 CPU cores, 8 GB memory, 50 GB storage</li>
+	<li><strong>Worker</strong>: 4 CPU cores, 16 GB memory, 50 GB storage</li>
+</ul>
+
+<p>All nodes should be attached to the same network. In case you're using OpenStack, make sure the network is connected to a router and to a gateway with floating IPs so you can use all features of the OpenStack Cloud Manager. Firewall rules can be found on the RKE website: <a href="https://rancher.com/docs/rke/latest/en/os/#ports">https://rancher.com/docs/rke/latest/en/os/#ports</a></p>
+
+<h2>Pre-requirements</h2>
+
+<p>On all nodes you need to have configured:</p>
+
+<ul>
+	<li>An SSH user with an authorized SSH key and sudo privileges</li>
+	<li>Of course, you need to install Docker. We're using the Redhat Enterprise Linux Docker which is available in the default CentOS repository.</li>
+	<li>This SSH user should be a member of the docker group</li>
+	<li>Enable SSH TCP Forwarding</li>
+</ul>
+
+<p>Check out all the requirements and how to configure these on the RKE website: <a href="https://rancher.com/docs/rke/latest/en/os/">https://rancher.com/docs/rke/latest/en/os/</a></p>
+
+<h2>Install RKE and Kubectl</h2>
+
+<p>Use the code below to install RKE (check out the latest version at <a href="https://github.com/rancher/rke/releases">https://github.com/rancher/rke/releases</a>)</p>
+
+<pre>
+<code class="language-bash">VERSION=v1.0.0 &amp;&amp; \
+curl -LO https://github.com/rancher/rke/releases/download/$VERSION/rke_linux-amd64 &amp;&amp; \
+chmod +x ./rke_linux-amd64 &amp;&amp; \
+sudo mv ./rke_linux-amd64 /usr/local/bin/rke</code></pre>
+
+<p>Use the code below to install kubectl (check out the latest supported version in the description of the used RKE version)</p>
+
+<pre>
+<code class="language-bash">VERSION=v1.16.3 &amp;&amp; \
+curl -LO https://storage.googleapis.com/kubernetes-release/release/$VERSION/bin/linux/amd64/kubectl &amp;&amp; \
+chmod +x ./kubectl &amp;&amp; \
+sudo mv ./kubectl /usr/local/bin/kubectl</code></pre>
+
+<h2>Deploy Kubernetes using RKE</h2>
+
+<p>When all requirements are met, we're ready to install a Kubernetes Cluster with RKE. RKE uses a configuration written in YAML. YAML files are human-readable and can be opened in every text editor. There is only one pitfall: YAML doesn't support TABS, use SPACES (at least two for indentation), keep that in mind.</p>
+
+<p>Create a new YAML file named <em>cluster.yml.</em> The absolute minimal configuration is a cluster configuration file with only a <em>nodes</em> section.</p>
+
+<pre>
+<code># Nodes: this is the only required configuration. Everything else is optional.
+nodes:
+  # Controlplane &amp; Etcd nodes
+  - address: 192.168.1.1
+    user: root
+    role:
+      - controlplane
+      - etcd
+    hostname_override: controlplane
+  # Worker nodes
+  - address: 192.168.1.2
+    user: root
+    role:
+      - worker
+    hostname_override: worker01
+  - address: 192.168.1.3
+    user: root
+    role:
+      - worker
+    hostname_override: worker02
+  - address: 192.168.1.4
+    user: root
+    role:
+      - worker
+    hostname_override: worker03</code></pre>
+
+<p>As you can see, the <em>nodes</em> section is an array of nodes. Each node defines an IP address and a role. Optionally you can define the SSH user and override the hostname. The latter could be used when you're using a provider who uses UUID or other non-readable names as hostnames. Because I'm using OpenStack I've to set the override because OpenStack sets the hostname on boot with cloud-init and this isn't picked up correctly by RKE automatically.</p>
+
+<p>If you do not want to configure anything else and use the default configurations, you are now ready to deploy your Kubernetes cluster by running <strong>$ rke up</strong>.</p>
+
+<h3>Additional configuration options</h3>
+
+<h4>Kubernetes Version</h4>
+
+<p>What Kubernetes version do you want to run? Unfortunately, you're not completely free to choose a version. Which Kubernetes version you can choose depends on the RKE version you're using. You'll find the list of supported Kubernetes versions in the RKE release description at GitHub. In the latest RKE version (v1.0.0) you can choose between v1.14.9, v1.15.6, and v.1.16.3. You can change the Kubernetes version in the cluster configuration file by adding the <em>kubernetes_version</em> directive.</p>
+
+<pre>
+<code>kubernetes_version: v1.16.3-rancher1-1</code></pre>
+
+<h4>Services</h4>
+
+<p>RKE deploys Kubernetes' core components in Docker containers to the nodes. Components managed by RKE are etcd, kube-apiserver, kube-controller-manager, kubelet, kube-scheduler, and kube-proxy. The kube-apiserver, kube-controller and kubelet service have some additional configuration options. For example, changing network subnets or adding extra arguments.</p>
+
+<pre>
+<code>services:
+  kube-api:
+    # IP range for any services created on Kubernetes
+    # This must match the service_cluster_ip_range in kube-controller
+    service_cluster_ip_range: 10.21.0.0/16
+    pod_security_policy: false
+    extra_args:
+      v: 2
+  kube-controller:
+    # CIDR pool used to assign IP addresses to pods in the cluster
+    cluster_cidr: 10.20.0.0/16
+    # IP range for any services created on Kubernetes
+    # This must match the service_cluster_ip_range in kube-api
+    service_cluster_ip_range: 10.21.0.0/16
+    extra_args:
+      v: 2
+  kubelet:
+    # IP address for the DNS service endpoint
+    cluster_dns_server: 10.21.0.10
+    extra_args:
+      max-pods: 200
+      v: 2</code></pre>
+
+<p>There are many more cases why you want to add additional arguments. In a future blog post, I'll explain how you can configure AzureAD and use alpha features in RKE deployed Kubernetes Clusters.</p>
+
+<h4>Authentication</h4>
+
+<p>By default, RKE configures x509 authentication. x509 is the only supported authentication strategy supported by RKE at the moment. Optionally you can change the <em>sans</em> to match the (external) IP address, for example, if the API is located behind a load balancer.</p>
+
+<pre>
+<code># Currently, only authentication strategy supported is x509.
+# You can optionally create additional SANs (hostnames or IPs) to add to
+#  the API server PKI certificate.
+# This is useful if you want to use a load balancer for the control plane servers.
+authentication:
+  strategy: x509 # Use x509 for cluster administrator credentials and keep them very safe after you've created them
+  sans:
+    - "192.168.1.254"</code></pre>
+
+<h3>Use the Kubernetes Cluster</h3>
+
+<p>Run <strong>$ rke up</strong> to provision the nodes with the Kubernetes components deployed by RKE. When RKE is finished, RKE will create a <em>kube_config_cluster.yml </em>kubeconfig file. This file is needed by <em>kubectl </em>and contains the cluster API address and administrator x509 certificates. These certificates are important and you need them to control the Kubernetes Cluster. Copy the kubeconfig file to <em>~/.kube/config</em>, the default location <em>kubectl</em> will look for a configuration file, and use <em>kubectl</em> to check if the cluster is up-and-running.</p>
+
+<pre>
+<code>$ kubectl get nodes
+NAME           STATUS   ROLES               AGE   VERSION
+controlplane   Ready    controlplane,etcd   1h    v1.16.3
+worker01       Ready    worker              1h    v1.16.3
+worker02       Ready    worker              1h    v1.16.3
+worker03       Ready    worker              1h    v1.16.3</code></pre>
+
+<h3>Redeploy or destroy the Kubernetes Cluster</h3>
+
+<p>Did something wrong or you want to clean up your test environment? Use <strong>$ rke remove</strong> to destroy the Kubernetes Cluster and optionally <strong>$ rke up</strong> to deploy a new and empty Kubernetes Cluster again.</p>
+
+<p>Any questions? Leave a comment!</p>

@@ -1,0 +1,79 @@
+---
+date: "2017-04-17"
+title: Persistent storage in Docker containers using Rancher-NFS
+slug: persistent-storage-in-docker-containers-using-rancher-nfs
+tags:
+- docker
+- rancher
+- rancher-nfs
+- persistent-volumes
+summary: "Number one challenge when you are using Docker in production environments is storage. On you local development machine it is possible to mount a local directory path into your docker container, but in production environments, this isn't an option because you don't know if the path exists and if the docker container is always running on the same node. A solution is NFS, and when using Rancher, Rancher-NFS."
+---
+<p><a href="https://docs.rancher.com/rancher/v1.5/en/cli/" target="_blank">Rancher</a> and <a href="https://docs.rancher.com/rancher/v1.5/en/cattle/rancher-compose/" target="_blank">Rancher Compose</a> documentation is available in the Rancher Docs. But I will explain the basics in this post.</p>
+
+<h2>Rancher</h2>
+
+<p>The Rancher command-line tool is a tool to manage the Rancher server from your command-line-interface. You can manage environments, hosts, stacks, services and containers.</p>
+
+<p>Before you can use the Rancher CLI tool, you have to create an environment API key in the rancher web interface. Then you have to define the Rancher URL, access key and secret key in environment variables (recommended).</p>
+
+<pre>
+<code>$ export RANCHER_URL=&lt;http://your-ip:8080&gt;
+$ export RANCHER_ACCESS_KEY=&lt;access key&gt;
+$ export RANCHER_SECRET_KEY=&lt;secret key&gt;</code></pre>
+
+<p>If you don't want to set environment variables, you can also provide the API key, secret and rancher server URL via options.</p>
+
+<pre>
+<code class="language-bash">$ rancher --url &lt;http://your-ip:8080&gt; --access-key &lt;access key&gt; --secret-key &lt;secret key&gt;</code></pre>
+
+<p>Now you're ready to use the Rancher CLI tool. To list all containers run:</p>
+
+<pre>
+<code class="language-bash">$ rancher ps</code></pre>
+
+<h2>Rancher Compose</h2>
+
+<p>Rancher Compose is a multi-host version of Docker Compose and will upload your docker-compose.yml and rancher-compose.yml to the Rancher server to deploy a new stack with the given configuration. This tool is ideal for CD pipelines!</p>
+
+<p>The Rancher Compose CLI tool works the same as Docker Compose, but before you can use it, you have to authenticate with the Rancher Server. This works exactly the same as the Rancher CLI tool, using environment variables or options.</p>
+
+<pre>
+<code>$ export RANCHER_URL=&lt;http://your-ip:8080&gt;
+$ export RANCHER_ACCESS_KEY=&lt;access key&gt;
+$ export RANCHER_SECRET_KEY=&lt;secret key&gt;</code></pre>
+
+<pre>
+<code class="language-bash">$ rancher-compose --url &lt;http://your-ip:8080&gt; --access-key &lt;access key&gt; --secret-key &lt;secret key&gt;</code></pre>
+
+<p>Create a docker-compose.yml configuration to test the rancher-compose CLI tool and boot up a new stack.</p>
+
+<pre>
+<code class="language-bash"># -p custom stack name
+# -d non-blocking
+# -c confirm the upgrade
+# --pull pull latest images
+# --force-upgrade always try to upgrade containers
+$ rancher-compose -p my-stack-name up -d -c --pull --force-upgrade</code></pre>
+
+<h2>Download</h2>
+
+<p>You can get the latest Rancher and Rancher Compose command-line tools from the Github pages. Because these tools get updated periodically, I created a small bash script to download the two tools and copy them to the <em>/</em><em>usr</em><em>/local/bin</em> directory.</p>
+
+<p>Copy the contents below to a bash file and use it to upgrade your rancher CLI and rancher-compose CLI tool periodically.</p>
+
+<pre>
+<code class="language-bash">#!/bin/bash
+
+# Download rancher and rancher-compose command line tools
+wget -O rancher-cli.tar.gz $(curl -s https://api.github.com/repos/rancher/cli/releases/latest | grep browser_download_url | grep 'linux-amd64' | head -n 1 | cut -d '"' -f 4)
+wget -O rancher-compose.tar.gz $(curl -s https://api.github.com/repos/rancher/rancher-compose/releases/latest | grep browser_download_url | grep 'linux-amd64' | head -n 1 | cut -d '"' -f 4)
+
+# extract the binaries from the tar archive
+sudo tar -xzvf rancher-cli.tar.gz -C /usr/local/bin --strip-components=2
+sudo tar -xzvf rancher-compose.tar.gz -C /usr/local/bin --strip-components=2
+
+# Remove the archive
+rm rancher-cli.tar.gz rancher-compose.tar.gz -f</code></pre>
+
+<p>If you found this post useful, or if you have any questions, leave a comment!</p>

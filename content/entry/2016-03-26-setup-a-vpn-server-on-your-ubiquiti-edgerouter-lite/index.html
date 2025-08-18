@@ -1,0 +1,103 @@
+---
+date: "2016-03-26"
+title: Setup a VPN server on your Ubiquiti EdgeRouter Lite
+slug: setup-a-vpn-server-on-your-ubiquiti-edgerouter-lite
+tags:
+- vpn
+- ubiquiti
+- edgerouter
+summary: "By connecting to my VPN server I have always a secure connection and can access my home network from every location with an internet connection. Creating a VPN server on an Ubiquiti EdgeRouter Lite running EdgeOS is easy! In this blog post, I set up an L2TP over IPsec VPN server."
+---
+<p>By connecting to my VPN server I have always a secure connection and can access my home network from every location with an internet connection.<br />
+    Creating a VPN server on an Ubiquiti EdgeRouter Lite running EdgeOS is easy! In this blog post, I set up an L2TP over IPsec VPN server.</p>
+    
+    <h2>My setup</h2>
+    
+    <p>To understand the configuration you should first know my setup. I have an Ubiquiti EdgeRouter Lite with 3 ports.<br />
+    The port configuration:</p>
+    
+    <p>eth0 - My FTTH connection<br />
+    eth0.4 - VLAN4 (Internet)<br />
+    eth0.6 - VLAN6 (IPTV)<br />
+    eth0.7 - VLAN7 (VOIP)<br />
+    eth1 - My LAN network<br />
+    eth2 - Link to the KPN Experiabox (VOIP)<br />
+    pppoe0 - Connection to KPN (Internet)</p>
+    
+    <h2>Enable IPsec on pppoe0</h2>
+    
+    <p>First, configure the allowed networks and enable NAT traversal on the pppoe0 interface.</p>
+    
+    <pre>
+    <code>set vpn ipsec ipsec-interfaces interface pppoe0
+    set vpn ipsec nat-networks allowed-network 10.0.0.0/8
+    set vpn ipsec nat-networks allowed-network 172.16.0.0/12
+    set vpn ipsec nat-networks allowed-network 192.168.0.0/16
+    set vpn ipsec nat-traversal enable</code></pre>
+    
+    <h2>Enable L2TP remote access with local authentication</h2>
+    
+    <p>I use the local authentication of the EdgeRouter but you can also use RADIUS.</p>
+    
+    <pre>
+    <code>set vpn l2tp remote-access authentication mode local</code></pre>
+    
+    <p>If you use local authentication you have also to define the users in the EdgeRouter. Replace &lt;username&gt; and &lt;password&gt; with your credentials.</p>
+    
+    <pre>
+    <code>set vpn l2tp remote-access authentication local-users username &lt;username&gt; password &lt;password&gt;</code></pre>
+    
+    <h2>Client IP pool</h2>
+    
+    <p>The VPN users should also get an IP from the EdgeRouter.</p>
+    
+    <pre>
+    <code>set vpn l2tp remote-access client-ip-pool start 172.16.201.50
+    set vpn l2tp remote-access client-ip-pool stop 172.16.201.100</code></pre>
+    
+    <h2>IPsec shared key</h2>
+    
+    <p>IPsec requires a pre-shared key for authentication. Replace &lt;password&gt; with your pre-shared key secret.</p>
+    
+    <pre>
+    <code>set vpn l2tp remote-access ipsec-settings authentication mode pre-shared-secret
+    set vpn l2tp remote-access ipsec-settings authentication pre-shared-secret &lt;password&gt;
+    set vpn l2tp remote-access ipsec-settings ike-lifetime 3600</code></pre>
+    
+    <h2>L2TP routing</h2>
+    
+    <p>Configure the outside address and next hop address to enable routing to the internet from a VPN connection. Replace &lt;IP address&gt; with the external IP address received by your ISP.</p>
+    
+    <pre>
+    <code>set vpn l2tp remote-access outside-address &lt;IP address&gt;
+    set vpn l2tp remote-access outside-nexthop &lt;IP address&gt;</code></pre>
+    
+    <h2>MTU tuning</h2>
+    
+    <p>You can set an MTU to avoid fragmentation and reassembly in the L2TP switching path.</p>
+    
+    <pre>
+    <code>set vpn l2tp remote-access mtu 1024</code></pre>
+    
+    <h2>Commit and Save</h2>
+    
+    <p>Commit and save the changes to the EdgeOS configuration.</p>
+    
+    <pre>
+    <code>commit; save; exit;</code></pre>
+    
+    <h2>Firewall</h2>
+    
+    <p>To allow VPN users to connect to your VPN server you have to open some ports in the firewall.</p>
+    
+    <p><strong>ACCEPT</strong> from <strong>WAN to LOCAL</strong>:</p>
+    
+    <p>IKE: UDP destination port 500<br />
+    L2TP: UDP destination port 1701<br />
+    ESP: protocol 50<br />
+    NAT-T: UDP destination port 4500</p>
+    
+    <h2>Test!</h2>
+    
+    <p>Connect to your VPN server from your phone or another external device. Once connected, run <strong>show </strong><strong>vpn</strong><strong> remote-access</strong> to view the session.</p>
+    

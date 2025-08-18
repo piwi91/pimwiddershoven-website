@@ -1,0 +1,7 @@
+.prose, .max-w-prose {
+    max-width: 100ch;
+}
+
+#TableOfContents {
+    min-width: 20ch;
+}

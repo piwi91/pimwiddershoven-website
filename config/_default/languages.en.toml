@@ -1,0 +1,25 @@
+languageCode = "en"
+languageName = "English"
+languageDirection = "ltr"
+weight = 1
+
+title = "Pim Widdershoven"
+# copyright = "Copy, _right?_ :thinking_face:"
+
+[params]
+  dateFormat = "2 January 2006"
+  mainSections = ["entry"]
+
+  # mainSections = ["section1", "section2"]
+  # description = "My awesome website"
+
+[params.author]
+  name = "Pim Widdershoven"
+  image = "img/profielfoto.jpg"
+  # headline = "Insert catchy headline here ;)"
+  # bio = "Cloud Devops Engineer and Solutions Architect that does a lot of DIY at home with tech, wood and bricks."
+  links = [
+    { email = "mailto:pim@widdershoven.nl" },
+    { github = "https://github.com/piwi91/" },
+    { linkedin = "https://www.linkedin.com/pub/pim-widdershoven/3a/b91/983" },
+  ]

@@ -1,0 +1,340 @@
+---
+date: "2018-03-19"
+title: High Available MySQL database cluster to eliminate your next SPOF
+slug: high-available-mysql-database-cluster-to-eliminate-your-next-spof
+tags:
+- mysql
+summary: "In high-available production environments like a Software-as-a-Service Cloud environment, you have to minimize any kind of downtime as much as possible. In most cases, an application needs at least a database server. If this database server gets unavailable, the application won't function anymore. In this case, the database software is your most critical SPOF to resolve. Percona XtraDB cluster can help you to eliminate this SPOF by setting up a master-master HA cluster."
+---
+<p>MySQL servers are in many environments a Single-Point-Of-Failure (SPOF). In High-Available production environments like a Software-as-a-Service Cloud environment, you can't accept this kind of risks. Eliminating this risk can be achieved by clustering multiple database servers and by replicating the data in real time. The most simple approach would be a master-slave configuration, but when the master server will go down the environment will run in read-only mode because the slave server only accepts reads. You could promote a slave server to master, but this would require scripting, which I don't want. So, master-master replication should do the trick and Percona will help me with this using their Percona XtraDB server product.</p>
+
+<h2>Infrastructure</h2>
+
+<p>The minimum amount of MySQL servers you need to run a production High-Available MySQL cluster is 3. This number should always be odd to prevent any <a href="https://en.wikipedia.org/wiki/Split-brain_(computing)" target="_blank">split-brain issues</a>. In our infrastructure, we also have an HA-Proxy server to load balance the MySQL connections/requests. The HA-Proxy server will also guarantee that unavailable or non-synced servers are taken out of the rotation.</p>
+
+<p>To run this cluster we need 4 servers. I have deployed these servers, pre-installed with CentOS 7, at our OpenStack provider and used the following specifications:</p>
+
+<p><strong>MySQL Server</strong><br />
+4 CPU Cores<br />
+8 GB Memory<br />
+40 GB Hard Disk (OS)<br />
+50 GB SSD Disk (MySQL data)</p>
+
+<p><strong>HA-Proxy Server</strong><br />
+2 CPU Cores<br />
+2 GB Memory<br />
+40 GB Hard Disk (OS)</p>
+
+<p>These servers are using a virtual internal network to communicate with each other. You can use a second network, 1:1 NAT rules, port forwarding, etc. to create an entry for users to use the MySQL server using the HA-Proxy server as a man-in-the-middle. <strong>You should always connect to the database cluster using the HA-Proxy server!</strong></p>
+
+<h2>Installation and configuration of Percona XtraDB Servers</h2>
+
+<p>We will start with the installation of the Percona XtraDB servers and use the YUM package manager to install the required packages. The Percona packages aren't in the base repository so we have to install the Percona YUM repository first.</p>
+
+<pre>
+<code class="language-bash">$ rpm -Ivh http://www.percona.com/downloads/percona-release/redhat/0.1-4/percona-release-0.1-4.noarch.rpm
+$ yum makecache fast</code></pre>
+
+<p>Before we run the install command, we check if the <em>/var/lib/</em><em>mysql</em> is mounted correctly. Because the<em> /var/lib/</em><em>mysql</em> directory is another disk, the <em>lost+found</em> directory is present. The Percona XtraDB server will fail if this directory is present, so remove it first.</p>
+
+<pre>
+<code class="language-bash">$ rm -rf /var/lib/mysql/lost+found</code></pre>
+
+<p>To prevent any issues, we disable SELinux too.</p>
+
+<pre>
+<code class="language-bash">$ vi /etc/sysconfig/selinux
+# SELINUX=disabled</code></pre>
+
+<p>Install Percona XtraDB Cluster and Client. You can choose the versions (5.6 of 5.7).</p>
+
+<pre>
+<code class="language-bash">$ yum install -y Percona-XtraDB-Cluster-56 Percona-XtraDB-Cluster-client-56
+# OR
+$ yum install -y Percona-XtraDB-Cluster-57 Percona-XtraDB-Cluster-client-57</code></pre>
+
+<p>We will use <em>xinetd</em> to advertise if a Percona XtraDB server is synced and should be available. We configure it later but install it already.</p>
+
+<pre>
+<code class="language-bash">$ yum install -y xinetd</code></pre>
+
+<p>Now everything has been installed we can start to configure the Percona XtraDB server. The configuration can be found in <em>/etc/my.cnf</em></p>
+
+<p>You can use the following configuration as a template:</p>
+
+<pre>
+<code>[mysqld]
+bind_address=0.0.0.0
+datadir=/var/lib/mysql
+general_log = /var/log/mysqld.log
+
+# Server mode
+skip-name-resolve
+skip-host-cache
+sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
+default_storage_engine=InnoDB
+binlog_format=ROW
+
+# General
+max_connections=1000
+#thread_cache_size=100
+#table_open_cache=200000
+#table_open_cache_instances=64
+#back_log=1500
+#query_cache_type=0
+
+# files
+innodb_file_per_table=1
+innodb_log_file_size=4G
+#innodb_log_files_in_group=2
+#innodb_open_files=4000
+#innodb_io_capacity=10000
+#loose-innodb_io_capacity_max=12000
+#innodb_lru_scan_depth=1024
+#innodb_page_cleaners=32
+
+# buffers
+innodb_buffer_pool_size=6G
+innodb_buffer_pool_instances=8
+innodb_log_buffer_size=64M
+
+# tune
+innodb_doublewrite=1
+innodb_support_xa=0
+innodb_thread_concurrency=0
+innodb_flush_log_at_trx_commit=0
+innodb_flush_method=O_DIRECT
+# This is a recommended tuning variable for performance
+innodb_locks_unsafe_for_binlog=1
+# This changes how InnoDB autoincrement locks are managed and is a requirement for Galera
+innodb_autoinc_lock_mode=2
+#innodb_max_dirty_pages_pct=90
+#join_buffer_size=32K
+#sort_buffer_size=32K
+#innodb_use_native_aio=0
+#innodb_stats_persistent=1
+
+# Galera
+wsrep_slave_threads=16
+wsrep_provider=/usr/lib64/galera3/libgalera_smm.so
+
+wsrep_cluster_address=gcomm://&lt;list of IP address&gt;
+
+wsrep_node_name=&lt;hostname&gt;
+wsrep_node_address=&lt;IP address&gt;
+wsrep_cluster_name=&lt;cluster name&gt;
+
+wsrep_sst_method=xtrabackup-v2
+wsrep_sst_auth="&lt;user&gt;:&lt;password&gt;"</code></pre>
+
+<p>There are 5 configuration items you are required to change:</p>
+
+<ul>
+	<li><strong>wsrep_cluster_address</strong>: the addresses of all the servers you want to include in the cluster (example: gcomm://10.0.0.1,10.0.0.2,10.0.0.3)</li>
+	<li><strong>wsrep_node_name</strong>: the hostname of the node (example: master-1)</li>
+	<li><strong>wsrep_node_address</strong>: IP address of the node (example: 10.0.0.1)</li>
+	<li><strong>wsrep_cluster_name</strong>: Name of the cluster (example: pxc-cluster)</li>
+	<li><strong>wsrep_sst_auth</strong>: username and password of the SST replication (example: sst_user:S3cr3t!)</li>
+</ul>
+
+<p>The cluster should be bootstrapped by the primary server (master-1). The bootstrapped primary server will start without any cluster addresses configured. When the bootstrapping has been finished, the Percona XtraDB server will run as a "normal" Percona XtraDB server. After adding the other two servers you can restart the primary server with the cluster addresses configured.</p>
+
+<pre>
+<code class="language-bash">$ systemctl start mysql@bootstrap.service
+$ systemctl status mysql@bootstrap.service</code></pre>
+
+<p>When the primary server has been started, change the be default empty root password, and create three extra users to support SST, backup the server using Xtrabackup and monitor the server using <em>clustercheck</em>.</p>
+
+<pre>
+<code class="language-bash">$ grep 'temporary password' /var/log/mysqld.log
+$ mysqladmin -u root --password=&lt;temp password&gt; password &lt;new password&gt;
+# Login to the MySQL server
+$ mysql -uroot -p
+# Check if no more root users are configured without a password. Set the password or remove the users.
+$ select * from mysql.user;
+# Update the password
+$ SET PASSWORD FOR 'root'@'127.0.0.1' = '&lt;password&gt;';
+# Or remove the user
+$ DROP USER 'root'@'127.0.0.1';
+# Create the SST user
+$ CREATE USER '&lt;SST user&gt;'@'localhost' IDENTIFIED BY '&lt;SST password&gt;';
+$ GRANT RELOAD, LOCK TABLES, REPLICATION CLIENT ON *.* TO '&lt;SST user&gt;'@'localhost';
+# Create the xtrabackup user
+$ GRANT ALL ON *.* TO '&lt;xtrabackup user&gt;'@'127.0.0.1' IDENTIFIED BY '&lt;xtrabackup_password&gt;';
+# Create the clustercheck user
+$ GRANT PROCESS ON *.* TO '&lt;clustercheck user&gt;'@'localhost' IDENTIFIED BY '&lt;clustercheck password&gt;';
+# Flush privileges and exit
+$ FLUSH PRIVILEGES;
+$ exit;</code></pre>
+
+<p>When the primary server has been configured, start the other two.</p>
+
+<pre>
+<code class="language-bash">$ systemctl start mysql</code></pre>
+
+<p>While the MySQL servers are starting, configure MySQL to start at boot on all three servers.</p>
+
+<pre>
+<code class="language-bash">$ systemctl enable mysql</code></pre>
+
+<p>Wait till the initial SST has been completed (you can check the status in the MySQL log) and login to the server. Check if the server has been synced and has joined the cluster.</p>
+
+<pre>
+<code class="language-sql">$ SHOW GLOBAL STATUS LIKE 'wsrep_cluster_size';</code></pre>
+
+<p>The cluster size should be "3".</p>
+
+<pre>
+<code class="language-sql">$ SHOW GLOBAL STATUS LIKE 'wsrep_local_state_comment';</code></pre>
+
+<p>And the local state should be "Synced" or "Joined".</p>
+
+<p>You can also use the <em>clustercheck </em>command to check if the cluster node is synced.</p>
+
+<pre>
+<code class="language-bash">$ clustercheck &lt;clustercheck user&gt; &lt;clustercheck password&gt;</code></pre>
+
+<p>We'll use this <em>clustercheck </em>command too in our <em>xinetd </em>configuration. This enables the HA-Proxy to check if a cluster node isn't too far behind on the other nodes.</p>
+
+<h2>Configuration of Xinetd</h2>
+
+<p>Xinetd is already installed. We only need to configure it. Test one more time if the clustercheck command is working on all three nodes.</p>
+
+<pre>
+<code class="language-bash">$ clustercheck &lt;clustercheck user&gt; &lt;clustercheck password&gt;</code></pre>
+
+<p>Create a new file in the <u><em>/etc/xinetd.d </em></u>directory and configure Xinetd to advertise the clustercheck command.</p>
+
+<pre>
+<code class="language-bash">$ vi /etc/xinetd.d/mysqlchk</code></pre>
+
+<p>Use the content below as a template:</p>
+
+<pre>
+<code># default: on
+# description: mysqlchk
+service mysqlchk
+{
+  flags           = REUSE
+  socket_type     = stream
+  protocol        = tcp
+  port            = 9200
+  wait            = no
+  user            = nobody
+  server          = /usr/bin/clustercheck
+  server_args     = &lt;clustercheck user&gt; &lt;clustercheck password&gt;
+  log_on_failure  += USERID
+  disable         = no
+}</code></pre>
+
+<p>Add the mysqlchk to the<em> /etc/services</em> list.</p>
+
+<pre>
+<code class="language-bash">$ echo "mysqlchk 9200/tcp" &gt;&gt; /etc/services</code></pre>
+
+<p>And enable and restart the <em>xinetd </em>service.</p>
+
+<pre>
+<code class="language-bash">$ systemctl enable xinetd
+$ systemctl start xinetd</code></pre>
+
+<p>Check if the service is available at localhost.</p>
+
+<pre>
+<code class="language-bash">$ telnet 127.0.0.1 9200</code></pre>
+
+<p>If you've installed a firewall, don't forget to open this port in the firewall!</p>
+
+<h2>Installation and configuration of HA-Proxy</h2>
+
+<p>HA-Proxy is available in the EPEL repository of CentOS. Install it using the YUM package manager.</p>
+
+<pre>
+<code class="language-bash">$ yum install -y haproxy</code></pre>
+
+<p>The configuration file is located at <em>/etc/</em><em>haproxy</em><em>/</em><em>haproxy</em><em>.cfg</em>. Replace this configuration file with the following one (use it as a template!).</p>
+
+<pre>
+<code>global
+    log 127.0.0.1 local0
+    log 127.0.0.1 local1 notice
+    maxconn 4096
+    chroot /usr/share/haproxy
+    user haproxy
+    group haproxy
+    daemon
+ 
+defaults
+    log                     global
+    mode                    http
+    option                  tcplog
+    option                  dontlognull
+    option                  redispatch
+    maxconn                 2000
+    retries                 3
+    timeout http-request    10s
+    timeout queue           1m
+    timeout connect         1h
+    timeout client          1m
+    timeout server          1m
+    timeout http-keep-alive 10s
+    timeout check           10s
+ 
+frontend stats-front
+    bind *:80
+    mode http
+    default_backend stats-back
+ 
+frontend pxc-front
+    bind *:3306
+    mode tcp
+    default_backend pxc-back
+ 
+frontend pxc-lb-front
+    bind *:3307
+    mode tcp
+    default_backend pxc-lb-back
+ 
+backend stats-back
+    mode http
+    balance roundrobin
+    stats uri /haproxy/stats
+    stats auth user:pass
+ 
+backend pxc-back
+    mode tcp
+    balance leastconn
+    option httpchk
+    timeout server 8h
+    server c1 10.0.0.1:3306 check port 9200 inter 2s downinter 10s rise 3 fall 3
+    server c2 10.0.0.2:3306 check port 9200 inter 2s downinter 10s rise 3 fall 3 backup
+    server c3 10.0.0.3:3306 check port 9200 inter 2s downinter 10s rise 3 fall 3 backup
+ 
+backend pxc-lb-back
+    mode tcp
+    balance leastconn
+    option httpchk
+    timeout server 8h
+    server c1 10.0.0.1:3306 check port 9200 inter 2s downinter 10s rise 3 fall 3
+    server c2 10.0.0.2:3306 check port 9200 inter 2s downinter 10s rise 3 fall 3
+    server c3 10.0.0.3:3306 check port 9200 inter 2s downinter 10s rise 3 fall 3</code></pre>
+
+<p>At port 3306 we configured the HA-Proxy server to use only one Percona XtraDB node for write/read transactions. I've done this to prevent any deadlocks caused by applications which aren't compatible with the side effects of database clusters. If an application is capable to handle deadlocks, or if an application is capable to split read and write actions, I can use port 3307 to read/write from three nodes.</p>
+
+<p>Maybe you have noted the "check port 9200" line. This will call the <em>clustercheck </em>command on each server over TCP/IP. The <em>clustercheck</em> command will return status codes: 200 OK (everything is in-sync) or 503 Service Unavailable (server not in sync, disabled because of maintenance, etc.). The <em>clustercheck </em>command is run every two seconds when the server is UP or every ten seconds when it is DOWN. In this configuration, a server is taken out of the rotation when the server is unavailable for 6 seconds or more (three checks * 2 seconds = 6 seconds).</p>
+
+<p>Start the HA-Proxy server to start load balancing the Percona XtraDB Cluster.</p>
+
+<pre>
+<code class="language-bash">$ systemctl enable haproxy
+$ systemctl start haproxy</code></pre>
+
+<p>Now it should be possible to access the MySQL cluster using the HA-Proxy load balancer.</p>
+
+<pre>
+<code class="language-bash"># This will only work when the root user is also allowed to login using the HA-Proxy server!
+$ mysql -h 127.0.0.1 -uroot -p</code></pre>
+
+<p>The status page of HA-Proxy is available at http://127.0.0.1/haproxy/stats.</p>
+
+<p>Good luck building your own Percona XtraDB Cluster with HA-Proxy!</p>

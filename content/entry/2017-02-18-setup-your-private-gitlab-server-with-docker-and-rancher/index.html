@@ -1,0 +1,126 @@
+---
+date: "2017-02-18"
+title: Setup your private GitLab server with Docker (and Rancher)
+slug: setup-your-private-gitlab-server-with-docker-and-rancher
+tags:
+- docker
+- rancher
+- gitlab
+summary: |
+    As a developer, I used GitHub a lot to store my (private) projects. This works great, but I do miss the CI integration as done by GitLab. I could use public services like Travis, but they do charge for private projects.
+    
+    Because we're using GitLab and GitLab CI at work I wondered how much work it would be to setup my private GitLab server on my Rancher environment. In this blog post, I will share the results with you.
+---
+<p>In this blog post, I will cover my Docker environment and the configuration of the Docker containers.</p>
+
+<h2>Environment</h2>
+
+<p>At home, I did build a powerful NAS machine for all my home projects, storage, backups, etc. I didn't want to install all applications on the machine "the bare-metal way" so I installed Docker and Rancher on it. With Rancher, I can swap applications in and out easily by starting and stopping Docker containers. You can find more about Rancher on their website <a href="http://rancher.com/">http://rancher.com/</a>.</p>
+
+<h2>GitLab in Docker containers</h2>
+
+<p>There are multiple ways to use GitLab in Docker containers:</p>
+
+<ol>
+	<li>Using the GitLab omnibus packages (the official GitLab Docker container)</li>
+	<li>Using third-party configurations like the configuration of Sameer Naik: <a href="https://github.com/sameersbn/docker-gitlab">https://github.com/sameersbn/docker-gitlab</a></li>
+</ol>
+
+<h3>Official GitLab Docker container</h3>
+
+<p>I will be really short about this container: just don't use it. It is really unstable, not configurable at all, and I couldn't get it working at all :-( ...</p>
+
+<h3>Sameer Naik's GitLab Docker configuration</h3>
+
+<p>After some googling, I ran into the docker-compose file of Sameer Naik's GitLab Docker configuration. The documentation is extremely comprehensive, which is a good sign. The GitHub repository is still maintained so I gave it a shot.</p>
+
+<p>I copy-pasted the docker-compose file but, unfortunately, Rancher didn't accept the version 2 docker-compose file. So I had to create my own docker-compose and rancher-compose file. I'm happy I did because there is really a lot to configure!</p>
+
+<p>I came up with the following docker-compose file:</p>
+
+<pre>
+<code>gitlab-ce-postgresql:
+  environment:
+    DB_USER: gitlab
+    DB_PASS: pass
+    DB_NAME: gitlabhq_production
+    DB_EXTENSION: pg_trgm
+  labels:
+    io.rancher.container.pull_image: always
+  tty: true
+  image: sameersbn/postgresql:9.6-2
+  volumes:
+  - /poolz2/volumes/gitlab/postgresql:/var/lib/postgresql:Z
+  stdin_open: true
+gitlab-ce-redis:
+  labels:
+    io.rancher.container.pull_image: always
+  tty: true
+  image: sameersbn/redis:latest
+  volumes:
+  - /poolz2/volumes/gitlab/redis:/var/lib/redis:Z
+  stdin_open: true
+gitlab-ce-gitlab:
+  ports:
+  - dedicated-ip-for-gitlab:80:80/tcp
+  - dedicated-ip-for-gitlab:443:443/tcp
+  - dedicated-ip-for-gitlab:22:22/tcp
+  environment:
+    DEBUG: 'false'
+    DB_ADAPTER: postgresql
+    DB_HOST: postgresql
+    DB_PORT: '5432'
+    DB_USER: gitlab
+    DB_PASS: pass
+    DB_NAME: gitlabhq_production
+    REDIS_HOST: redis
+    REDIS_PORT: '6379'
+    TZ: Europe/Amsterdam
+    GITLAB_TIMEZONE: Europe/Amsterdam
+    GITLAB_HTTPS: 'false'
+    SSL_SELF_SIGNED: 'false'
+    GITLAB_HOST: gitlab.mapi.local
+    GITLAB_SECRETS_DB_KEY_BASE: key
+    GITLAB_SECRETS_SECRET_KEY_BASE: key
+    GITLAB_SECRETS_OTP_KEY_BASE: key
+    GITLAB_EMAIL: gitlab@gitlab.mapi.local
+    GITLAB_EMAIL_REPLY_TO: gitlab@pimwiddershoven.nl
+    GITLAB_BACKUP_SCHEDULE: daily
+    GITLAB_BACKUP_TIME: 01:00
+    SMTP_ENABLED: 'true'
+    SMTP_DOMAIN: pimwiddershoven.nl
+    SMTP_HOST: pimwiddershoven.nl
+    SMTP_PORT: '587'
+    SMTP_USER: user
+    SMTP_PASS: pass
+    IMAP_ENABLED: 'false'
+    IMAP_HOST: pimwiddershoven.nl
+    IMAP_PORT: '993'
+    IMAP_USER: user
+    IMAP_PASS: pass
+  labels:
+    io.rancher.container.pull_image: always
+  tty: true
+  image: sameersbn/gitlab:8.16.5
+  links:
+  - gitlab-ce-redis:redis
+  - gitlab-ce-postgresql:postgresql
+  volumes:
+  - /poolz2/volumes/gitlab/gitlab:/home/git/data:Z
+  stdin_open: true
+</code></pre>
+
+<p>For completeness I will also show you the rancher-compose file:</p>
+
+<pre>
+<code>gitlab-ce-postgresql:
+  scale: 1
+gitlab-ce-redis:
+  scale: 1
+gitlab-ce-gitlab:
+  scale: 1
+</code></pre>
+
+<p>After booting up the "Stack" and waiting till the database migration was finished, I had a working GitLab environment on my internal domain gitlab.mapi.local.</p>
+
+<p>With above configuration, I had set up my own private GitLab environment in approx. 15 minutes and I was ready to move my GitHub home project to GitLab.</p>

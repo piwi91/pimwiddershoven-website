@@ -1,0 +1,139 @@
+---
+date: "2015-12-03"
+title: "HOWTO: Quick start to the Silex microframework"
+slug: quick-start-to-the-silex-microframework
+tags:
+- php
+- symfony
+- silex
+summary: "How to start with the Silex microframework and what is the best folder structure for my new micro project? Edwin Kortman (also known as Dreadwin) created a Silex boilerplate repository based on a blog post by Matthias Noback in 2012 to quickly setup a new Silex project and I'm really excited about it!"
+---
+<p>Because I work on rather large projects, I usually use the <a href="http://www.symfony.com" target="_blank">full-stack Symfony2 framework</a> created by Sensiolabs. This framework helps me to do my job better and more efficient. Even if I'm working on a rather small project, which doesn't need al the fancy features of Symfony2, I use it because of the already existing boilerplate and setup. This is why I'm interested in the Silex microframework.</p>
+
+<p>How to start with the Silex microframework (also created by Sensiolabs) and what is the best folder structure for my new micro project? Edwin Kortman (also known as Dreadwin) created a <a href="https://github.com/Dreadwin/silex-boilerplate" target="_blank">Silex boilerplate repository</a> based on a <a href="http://php-and-symfony.matthiasnoback.nl/2012/01/silex-getting-your-project-structure-right/" target="_blank">blog post by Matthias Noback</a> in 2012 to quickly setup a new Silex project and I'm really excited about it!</p>
+
+<h2>What is Silex?</h2>
+
+<blockquote>Silex is a PHP microframework for PHP. It is built on the shoulders of Symfony2 and Pimple and also inspired by sinatra.<br />
+- http://silex.sensiolabs.org/</blockquote>
+
+<p>Silex is actually a PHP application where controller and route mappings are done in a single file: <em>app/app.php</em>. You can use it for your micro project, micro service, a proof of concept or just "to test some things".</p>
+
+<p>An example from the Silex website:</p>
+
+<pre>
+<code class="language-php">$app = new Silex\Application(); 
+
+$app-&gt;get('/hello/{name}', function($name) use($app) { 
+    return 'Hello '.$app-&gt;escape($name); 
+}); 
+
+$app-&gt;run(); </code></pre>
+
+<h2>About the Silex boilerplate repository</h2>
+
+<ul>
+	<li>The Silex boilerplate repository is the thin Silex implementation without <a href="http://twig.sensiolabs.org/" target="_blank">Twig </a> or <a href="http://www.doctrine-project.org/" target="_blank">Doctrine</a>. I will discuss the implementation of Twig later on in this blog post.</li>
+	<li><a href="https://phpunit.de/" target="_blank">PHPUnit </a>^4.0 is available in your development environment.</li>
+	<li><a href="https://getcomposer.org/" target="_blank">Composer</a>!</li>
+	<li>The /src directory represents the App namespace (PSR-4) and is autoloaded by composer.</li>
+</ul>
+
+<h2>Requirements</h2>
+
+<ul>
+	<li>PHP &gt;5.3.9</li>
+	<li>ext-xdebug when running PHPUnit code coverage in development environment</li>
+</ul>
+
+<h2>Pre-requirements</h2>
+
+<p>Get a copy of the repository by cloning it with your favorite GIT tool:</p>
+
+<pre>
+<code class="language-bash">$ git clone https://github.com/Dreadwin/silex-boilerplate.git silex</code></pre>
+
+<p>If you want to commit any changes in a new repository you can change the remote (or add a separate one):</p>
+
+<pre>
+<code class="language-bash">$ git remote set-url origin &lt;new-url&gt;</code></pre>
+
+<p>Before booting up Silex for the first time, install all dependencies with composer.</p>
+
+<pre>
+<code class="language-bash">$ composer install</code></pre>
+
+<h2>Run your Silex application</h2>
+
+<p>Hopefully you're not using PHP 5.3.x anymore. If that is the case you can use the built-in webserver of PHP for development. This server allows you to run your Silex application without any configuration - Easy!</p>
+
+<pre>
+<code class="language-bash">$ php -S 127.0.0.1:8080 -t web web/index.php</code></pre>
+
+<p>After booting up, the application is available at http://127.0.0.1:8080. After requesting the page it should show you "Welcome to my new Silex app" and your application is ready to use!</p>
+
+<h2>Twig integration</h2>
+
+<p>Most visitors will appreciate it if the frontend work is also top of the art. Twig is a flexible, fast and secure templating engine that's also developed by Sensiolabs and can help you to create dynamic and awesome views. But before you can use Twig, you have to implement it in your Silex application.</p>
+
+<p>First, load the twig dependency with composer:</p>
+
+<pre>
+<code class="language-bash">$ composer require twig/twig</code></pre>
+
+<p>Secondly, register it in app/app.php and define the path where your views will live:</p>
+
+<pre>
+<code class="language-php">$app-&gt;register(new Silex\Provider\TwigServiceProvider(), array(
+    'twig.path' =&gt; __DIR__.'/views',
+));</code></pre>
+
+<p>If the views directory doesn't exist, create it:</p>
+
+<pre>
+<code class="language-bash">$ mkdir app/views</code></pre>
+
+<p>Create the first view:</p>
+
+<pre>
+<code class="language-bash">$ vi app/views/hello.twig</code></pre>
+
+<p>And add some content:</p>
+
+<pre>
+<code class="language-html">&lt;h1&gt;Hello {{ name }}!&lt;/h1&gt;</code></pre>
+
+<p>And define the controller and route mapping:</p>
+
+<pre>
+<code class="language-php">$app-&gt;get('/hello/{name}', function ($name) use ($app) {
+    return $app['twig']-&gt;render('hello.twig', array(
+        'name' =&gt; $name,
+    ));
+});</code></pre>
+
+<p>Test it by going to http://127.0.0.1:8080/hello/world and it should show you "Hello world!".</p>
+
+<p>The full documentation about the twig integration can be found an the <a href="http://silex.sensiolabs.org/doc/providers/twig.html" target="_blank">Silex website</a> and includes additional integration between some Symfony components and Twig like URL generation, translations, form helpers and security functions.</p>
+
+<h2>Static files</h2>
+
+<p>If you use the built-in PHP webserver you will notice that Silex tries to match every request. In order to do frontend work you will probably need to serve stylesheets, images, etc. To achieve this you will have to make sure that your front controller (web/index.php) returns false in that case.</p>
+
+<p>Add this snippet at the start of the app/index.php before requiring the app.php.</p>
+
+<pre>
+<code class="language-php">$filename = __DIR__.preg_replace('#(\?.*)$#', '', $_SERVER['REQUEST_URI']);
+if (php_sapi_name() === 'cli-server' &amp;&amp; is_file($filename)) {
+    return false;
+}</code></pre>
+
+<h2>Links</h2>
+
+<p>Silex boilerplate: <a href="https://github.com/Dreadwin/silex-boilerplate" target="_blank">https://github.com/Dreadwin/silex-boilerplate</a><br />
+Silex with Twig: <a href="https://github.com/piwi91/silex-boilerplate-with-twig" target="_blank">https://github.com/piwi91/silex-boilerplate-with-twig</a><br />
+Silex documentation: <a href="http://silex.sensiolabs.org/doc" target="_blank">http://silex.sensiolabs.org/doc</a></p>
+
+<p>If you have any questions please leave a comment!</p>
+
+<p>And if you find any issues or you have additions, don't forget to create a PR! :-)</p>

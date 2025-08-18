@@ -1,0 +1,38 @@
+---
+date: "2016-04-23"
+title: KPN Routed IPTV on an Ubiquiti EdgeRouter Lite - Lessons Learned - Part 2
+slug: kpn-routed-iptv-on-an-ubiquiti-edgerouter-lite-lessons-learned-part-2
+tags:
+- kpn
+- iptv
+- ubiquiti
+- edgerouter
+summary: "After blogging about my lessons learned on 28 March this year, I have to create a 'part 2' because of problems with the static route to the KPN IPTV network. It changes at every reboot which causes a not working IPTV network in-house."
+---
+<p>After blogging about my lessons learned on 28 March this year, I have to create a 'part 2' because of problems with the static route to the KPN IPTV network.</p>
+
+<p>The problem: On every reboot, I get a DHCP address in another subnet. The previous static route doesn't match the new subnet and causes a not working IPTV network in-house. To resolve this, I had to update the static route at every reboot...</p>
+
+<p>The solution: Update the static route after the boot process has completed.</p>
+
+<p>The script I created:</p>
+
+<pre>
+<code class="language-bash">#!/bin/vbash
+
+source /opt/vyatta/etc/functions/script-template
+
+r_ip=$(run show dhcp client leases | grep router | awk '{ print $3 }');
+iptv_static=$(echo "set protocols static route 213.75.112.0/21 next-hop $r_ip")
+
+configure
+delete protocols static route 213.75.112.0/21
+eval $iptv_static
+commit
+save
+exit
+</code></pre>
+
+<p>The script retrieves the next-hop address from the DHCP client lease. Then I delete the previous static route to 213.75.112.0/21 and set a new one.</p>
+
+<p>To run it at every boot, create the script in the <strong>/config/scripts/post-config.d</strong> directory and <strong>make it executable</strong> (chmod +x).</p>

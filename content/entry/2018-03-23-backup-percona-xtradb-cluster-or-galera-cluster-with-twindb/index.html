@@ -1,0 +1,122 @@
+---
+date: "2018-03-23"
+title: Backup Percona XtraDB Cluster or Galera Cluster with TwinDB
+slug: backup-percona-xtradb-cluster-or-galera-cluster-with-twindb
+tags:
+- percona
+- percona-xtradb
+- mysql
+summary: "Database servers and clusters should be backed up regularly to prevent data loss when an error or disaster occurs. You can backup database servers logically using mysqldump, but you can also backup databases physically using Percona XtraBackup. XtraBackup enables you to run full and incremental backups, stream backups, compress and encrypt backups. TwinDB has simplified the usage of Xtrabackup and will automatically backup your Percona XtraDB cluster on an hourly basis."
+---
+<p>To backup my Percona XtraDB Cluster, which is running galera3 for write-set replication, I use the tool TwinDB backup. This backup tool uses Percona XtraBackup to create, store and restore full and incremental backups, compress backups and encrypt backups.</p>
+
+<p>I use HA-Proxy to load balance the Percona XtraDB cluster nodes and to automatically fail-over if a node enters the desynced state or is shut down. You can read everything about <a href="http://www.pimwiddershoven.nl/entry/high-available-mysql-database-cluster-to-eliminate-your-next-spof">installing a Percona XtraDB Cluster with HA-Proxy Load Balancer</a> in <a href="http://www.pimwiddershoven.nl/entry/high-available-mysql-database-cluster-to-eliminate-your-next-spof">my previous blog post</a>. Why I choose for TwinDB is because it uses the global 'wsrep_desync' variable to move the node into Donor/Desynced mode and disables flow control. When a node enters the desynced state, the node is removed from the rotation and I can backup the server without any interruption in my production environment.</p>
+
+<p>The installation of TwinDB is easy:</p>
+
+<pre>
+<code class="language-bash">$ curl -s https://packagecloud.io/install/repositories/twindb/main/script.rpm.sh | sudo bash
+$ yum install twindb-backup</code></pre>
+
+<p>If you have an older installation of Percona XtraBackup, you have to remove that package first:</p>
+
+<pre>
+<code class="language-bash">$ yum remove percona-xtrabackup</code></pre>
+
+<p>In my case, we're still using MySQL 5.6, so I have to use an older version of TwinDB:</p>
+
+<pre>
+<code class="language-bash">$ yum install twindb-backup-2.12.0</code></pre>
+
+<p>The latest MySQL backup is stored locally, so we have to create a directory for that:</p>
+
+<pre>
+<code class="language-bash">$ mkdir -p /var/backups/mysql</code></pre>
+
+<p>The configuration is stored in <em>/etc/</em><em>twindb</em><em>/</em><em>twindb</em><em>-backup.cfg</em>. All options are described in the <a href="https://twindb-backup.readthedocs.io/en/master/usage.html" target="_blank">TwinDB documentation located at readthedocs.io</a>. I'm using the following configuration:</p>
+
+<pre>
+<code># NOTE: don't quote option values
+# What to backup
+[source]
+backup_dirs=/etc
+backup_mysql=yes
+
+# Destination
+[destination]
+# backup destination can be ssh or s3
+backup_destination=ssh
+keep_local_path=/var/backups/mysql
+
+[ssh]
+# SSH destination settings
+backup_host=127.0.0.1
+backup_dir=/tmp/backup
+ssh_user=root
+ssh_key=/root/.ssh/id_rsa
+
+[mysql]
+# MySQL
+mysql_defaults_file=/etc/twindb/my.cnf
+full_backup=daily
+
+[retention]
+# Remote retention policy
+hourly_copies=24
+daily_copies=7
+weekly_copies=4
+monthly_copies=3
+yearly_copies=0
+
+[retention_local]
+# Local retention policy
+hourly_copies=1
+daily_copies=1
+weekly_copies=0
+monthly_copies=0
+yearly_copies=0
+
+[intervals]
+# Run intervals
+run_hourly=yes
+run_daily=yes
+run_weekly=yes
+run_monthly=yes
+run_yearly=no</code></pre>
+
+<p>The `/etc/twindb/my.cnf` file doesn't exist by default. You have to create it and store the MySQL credentials for the backup user in there:</p>
+
+<pre>
+<code>[client]
+user="&lt;user&gt;"
+password="&lt;password"&gt;</code></pre>
+
+<p>If you don't have a backup user yet, create one:</p>
+
+<pre>
+<code class="language-sql">GRANT ALL ON *.* TO 'xtrabackup'@'127.0.0.1' IDENTIFIED BY '&lt;password&gt;';</code></pre>
+
+<p>Change the <em>/etc/cron.d/</em><em>twindb</em><em>-backup</em> to change the email address of the monitor e-mail. Add <em>MAILTO=&lt;email address&gt;</em> to the cron file. You can also change when the cronjobs are executed if you want.</p>
+
+<p>Check if the twindb-backup is configured correctly:</p>
+
+<pre>
+<code class="language-bash">$ twindb-backup status</code></pre>
+
+<p>When everything is configured correctly you will receive the status of the twindb backup:</p>
+
+<pre>
+<code>{
+    "daily": {},
+    "hourly": {},
+    "monthly": {},
+    "weekly": {},
+    "yearly": {}
+}</code></pre>
+
+<p>Run <em>twindb</em><em>-backup backup hourly</em> to start the hourly backup.</p>
+
+<pre>
+<code class="language-bash">$ twindb-backup backup hourly</code></pre>
+
+<p>Happy backuping!</p>

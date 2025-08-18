@@ -1,0 +1,115 @@
+---
+date: "2019-12-22"
+title: Deploy a secure instance of Elasticsearch on Kubernetes
+slug: deploy-a-secure-instance-of-elasticsearch-on-kubernetes
+tags:
+- kubernetes
+- elasticsearch
+- security
+- certificates
+summary: "It's easy to deploy Elasticsearch on Kubernetes. You get yourself a copy of the Elastic Helm Charts and you run helm install. Job well done... or not? The default Elasticsearch configuration doesn't enable any encryption or security mechanism, that doesn't sound really safe! In this blog post, I'll explain how you secure your Elasticsearch instance by enabling encryption (SSL transport and HTTP over SSL) and native authentication."
+---
+<p>The guys at Elastic made it really easy to deploy your own highly available Elasticsearch cluster on Kubernetes. Elastic supports multiple deployment methods. I'm using the Helm Chart option but you can also go for the <a href="https://www.elastic.co/products/elastic-cloud-kubernetes">Elastic Cloud Kubernetes Operator</a> option (out-of-scope for this blog post). As of version 7 of Elasticsearch, it is required to use the <a href="https://github.com/elastic/helm-charts">Elastic Helm Chart repository</a> instead of the <a href="https://github.com/helm/charts/tree/master/stable/elasticsearch">stable repository</a> from Helm itself when you want to use the latest Elasticsearch version. The Elasticsearch Helm Chart in the stable repository is deprecated and not updated to support major version 7 of Elasticsearch.</p>
+
+<p>Helm is a package manager for Kubernetes and a lot of vendors, including Elastic, created their own repository to deliver supported Helm Charts for their products. After you get yourself a copy (<em>git clone</em>) of the repository you are able to install their products. Clone the Elastic Helm repository so we can start deploying our secure instance of Elasticsearch.</p>
+
+<pre>
+<code class="language-bash">git clone https://github.com/elastic/helm-charts.git</code></pre>
+
+<p>The Elastic Helm repository comes with a few ready-to-use charts: elasticsearch, filebeat, kibana, logstash and metricbeat. We will only use the Elasticsearch chart, but all the other charts can be used in the same way.</p>
+
+<h2>Elasticsearch</h2>
+
+<p>In the Elasticsearch chart, you'll find a few files. The most interesting file is the <em>values.yaml</em>. This file contains the default configuration of Elasticsearch and can be used as a template. When you don't understand all configuration options you should have a look in the <em>README.md</em> file, you'll find a detailed explanation about all configuration options in there.</p>
+
+<p>The changes in configuration have to be configured in a separate <em>values</em> file. Create this file outside the Elastic Helm repository and copy/paste the content below.</p>
+
+<pre>
+<code>clusterName: "elasticsearch"
+nodeGroup: "master"
+
+# The service that non master groups will try to connect to when joining the cluster
+# This should be set to clusterName + "-" + nodeGroup for your master group
+masterService: "elasticsearch-master"
+
+# Elasticsearch roles that will be applied to this nodeGroup
+# These will be set as environment variables. E.g. node.master=true
+roles:
+  master: "true"
+  ingest: "true"
+  data: "true"</code></pre>
+
+<p>This is the minimal configuration to deploy an Elasticsearch instance. In this case, we're using the default <em>clusterName</em> and <em>nodeGroup</em>, but when you want to run multiple Elasticsearch clusters in your Kubernetes cluster you should change the cluster name to something else. The <em>masterService</em> should be set to <em>clusterName + nodeGroup </em>of the Elasticsearch master cluster. For this post, we just deploy everything (master, data and ingest) on one cluster, but it is wise to split up the master and data roles in separate deployment for production-grade environments. When you want to learn more about cluster design and node types, read the <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-node.html">Node section in the Elasticsearch reference</a>.</p>
+
+<h2>Security</h2>
+
+<p>Before we're able to enable the security plugin (X-Pack), we have to generate PKI files. The code below (<a href="https://github.com/elastic/helm-charts/blob/master/elasticsearch/examples/security/Makefile">source</a>) helps you to automatically generate public certificates and private key files for Elasticsearch and Kibana (out-of-scope). Elasticsearch supports the PKCS12 format. By using PKCS we are able to store the public certificate and private key in just one file. Unfortunately, Kibana doesn't support PKCS12 because it is written in NodeJS which lacks good support of the PKCS12 format. That is why we also generate the certificate in PEM format. The outputs of the certificates, keys, and passwords are stored in Kubernetes in the default namespace used by <em>kubectl</em>. Change the script below when you want to store it somewhere else.</p>
+
+<p>I named the script to <em>create-elastic-certificates.sh</em>. Check out the usage comment on how you use the script.</p>
+
+<pre>
+<code class="language-bash">#!/bin/bash
+# Usage: STACK_VERSION=7.5.2 DNS_NAME=elasticsearch NAMESPACE=default ./create-elastic-certificates.sh
+
+# ELASTICSEARCH
+docker rm -f elastic-helm-charts-certs || true
+rm -f elastic-certificates.p12 elastic-certificate.pem elastic-stack-ca.p12 || true
+password=$([ ! -z "$ELASTIC_PASSWORD" ] &amp;&amp; echo $ELASTIC_PASSWORD || echo $(docker run --rm docker.elastic.co/elasticsearch/elasticsearch:$STACK_VERSION /bin/sh -c "&lt; /dev/urandom tr -cd '[:alnum:]' | head -c20")) &amp;&amp; \
+docker run --name elastic-helm-charts-certs --env DNS_NAME -i -w /app \
+        docker.elastic.co/elasticsearch/elasticsearch:$STACK_VERSION \
+        /bin/sh -c " \
+                elasticsearch-certutil ca --out /app/elastic-stack-ca.p12 --pass '' &amp;&amp; \
+                elasticsearch-certutil cert --name $DNS_NAME --dns $DNS_NAME --ca /app/elastic-stack-ca.p12 --pass '' --ca-pass '' --out /app/elastic-certificates.p12" &amp;&amp; \
+docker cp elastic-helm-charts-certs:/app/elastic-certificates.p12 ./ &amp;&amp; \
+docker rm -f elastic-helm-charts-certs &amp;&amp; \
+openssl pkcs12 -nodes -passin pass:'' -in elastic-certificates.p12 -out elastic-certificate.pem &amp;&amp; \
+kubectl -n $NAMESPACE create secret generic elastic-certificates --from-file=elastic-certificates.p12 &amp;&amp; \
+kubectl -n $NAMESPACE create secret generic elastic-certificate-pem --from-file=elastic-certificate.pem &amp;&amp; \
+kubectl -n $NAMESPACE create secret generic elastic-credentials  --from-literal=password=$password --from-literal=username=elastic &amp;&amp; 
+rm -f elastic-certificates.p12 elastic-certificate.pem elastic-stack-ca.p12
+</code></pre>
+
+<p>After you've generated the certificates and password and stored them into Kubernetes we can add some more configuration into the values file. You can copy/paste the content below.</p>
+
+<pre>
+<code>protocol: https
+
+esConfig:
+  elasticsearch.yml: |
+    xpack.security.enabled: true
+    xpack.security.transport.ssl.enabled: true
+    xpack.security.transport.ssl.verification_mode: certificate
+    xpack.security.transport.ssl.keystore.path: /usr/share/elasticsearch/config/certs/elastic-certificates.p12
+    xpack.security.transport.ssl.truststore.path: /usr/share/elasticsearch/config/certs/elastic-certificates.p12
+    xpack.security.http.ssl.enabled: true
+    xpack.security.http.ssl.truststore.path: /usr/share/elasticsearch/config/certs/elastic-certificates.p12
+    xpack.security.http.ssl.keystore.path: /usr/share/elasticsearch/config/certs/elastic-certificates.p12
+    xpack.security.authc.realms.native.local.order: 0
+
+extraEnvs:
+  - name: ELASTIC_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: elastic-credentials
+        key: password
+  - name: ELASTIC_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: elastic-credentials
+        key: username
+
+secretMounts:
+  - name: elastic-certificates
+    secretName: elastic-certificates
+    path: /usr/share/elasticsearch/config/certs</code></pre>
+
+<p>As you see I enabled the SSL transport layer, HTTP over SSL and native authentication. The extra environment variables set the default username and password for the Elasticsearch cluster.</p>
+
+<h2>Deploy to Kubernetes</h2>
+
+<p>That's it! Use <em>helm install</em> to install your secure Elasticsearch cluster into your Kubernetes cluster.</p>
+
+<pre>
+<code>helm install --name elasticsearch --values elasticsearch-values.yml ./helm-charts/elasticsearch</code></pre>
+
+<p>In my next blog, I'll explain how to deploy a secure instance of Kibana.</p>

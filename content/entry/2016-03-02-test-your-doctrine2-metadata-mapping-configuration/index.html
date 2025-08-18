@@ -1,0 +1,53 @@
+---
+date: "2016-03-02"
+title: Test your Doctrine2 metadata mapping configuration
+slug: test-your-doctrine2-metadata-mapping-configuration
+tags:
+- php
+- doctrine
+summary: "I use the Doctrine2 Object Relational Mapper as abstraction layer between my model and database. I use PHPUnit to unit test my code, but if the configuration is incorrect the code won't work like intended and the Doctrine2 ORM will fail with exceptions as result. To ensure the configuration is correct I created a test to validate my configuration."
+---
+<p>I use the <a href="http://www.doctrine-project.org/projects/orm.html" target="_blank">Doctrine2 Object Relational Mapper</a> as abstraction layer between my model and database. I use <a href="https://phpunit.de" target="_blank">PHPUnit </a>to unit test my code, but if the configuration is incorrect the code won't work like intended and the Doctrine2 ORM will fail with exceptions as result. To ensure the configuration is correct I created a test to validate my configuration.</p>
+
+<h3>The test</h3>
+
+<pre>
+<code class="language-php">&lt;?php
+
+final class SchemaValidationTest extends PHPUnit_Framework_TestCase
+{
+    public function test_valid_doctrine_schema()
+    {
+        $driver = new \Doctrine\ORM\Mapping\Driver\SimplifiedYamlDriver([
+            __DIR__ . '/../src/Resources/doctrine/mapping' =&gt; 'Acme\Lib' // directory =&gt; namespace prefix
+        ]);
+
+        $config = \Doctrine\ORM\Tools\Setup::createConfiguration(true);
+        $config-&gt;setMetadataDriverImpl($driver);
+
+        $em = \Doctrine\ORM\EntityManager::create(['url' =&gt; 'sqlite:///schema-validation.sqlite'], $config);
+
+        $validator = new \Doctrine\ORM\Tools\SchemaValidator($em);
+
+        $errors = $validator-&gt;validateMapping();
+
+        if (count($errors) &gt; 0) {
+            $message = PHP_EOL;
+            foreach ($errors as $class =&gt; $classErrors) {
+                $message .= "- " . $class . ":" . PHP_EOL . implode(PHP_EOL, $classErrors) . PHP_EOL . PHP_EOL;
+            }
+            $this-&gt;fail($message);
+        }
+    }
+}
+</code></pre>
+
+<p>First I had to create a driver to read the metadata mapping configuration. I used the <em>SimplifiedYamlDriver </em>(donated and used by Symfony) to be compatible with the Symfony2 framework (file extension: <em>.orm.yml</em> instead of <em>.dcm.yml</em>). You can also use the more generic <em>YamlDriver. </em>The <em>SimplifiedYamlDriver</em> expects an array with the location of the configuration files as <strong>key</strong> and the prefix namespace as <strong>value</strong>.</p>
+
+<p>Then I created a configuration with development enabled to prevent the creation of <a href="http://stackoverflow.com/questions/4923817/what-is-a-proxy-in-doctrine-2/17787070#17787070" target="_blank">Proxy classes (Stackoverflow)</a> and set the previously created driver as metadata driver.</p>
+
+<p>Now you're ready to initiate an <em>EntityManager</em>. I used a SQLite connection because a connection is required by the <em>EntityManager</em>. The second parameter is the configuration.</p>
+
+<p>At last, the <em>SchemaValidator </em>tool should be initiated. The <em>SchemaValidator </em>validates the mapping and returns an array of errors which I count to determine if the the test should succeed or fail.</p>
+
+<p>Done! The continuous integration tool I'm using will run all tests, including this one, at every push and failing configurations belong to the past.</p>

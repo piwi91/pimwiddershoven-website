@@ -1,0 +1,24 @@
+---
+date: "2021-03-16"
+title: Flash ESPEasy on NodeMCU ESP32-WROOM-32
+slug: flash-espeasy-on-nodemcu-esp32-wroom-32
+tags:
+- hashicorp
+- terraform
+- azure
+- cloud
+- devops
+- infrastructure-as-code
+summary: "I bought some NodeMCU ESP32-WROOM-32 development boards to monitor temperatures of my central heating system with 20+ underfloor heating groups. I want to know the temperature of each group to optimize the system. I use ESPEasy because it is more or less plug-and-play. In this blog post I share how you flash and install ESPEasy on your ESP32."
+---
+<p>I&nbsp;bought some NodeMCU ESP32-WROOM-32 development boards to monitor temperatures of my central heating system with 20+ underfloor heating groups. I want to know the temperature of each group to optimize the system. I use ESPEasy because it is more or less plug-and-play. In this blog post I share how you flash and install ESPEasy on your ESP32.</p>
+
+<p>The tool included in the ESPEasy download is not compatible with ESP32. To flash&nbsp;ESPEasy on the NodeMCU ESP32-WROOM-32 development board, you need the&nbsp;<a href="https://www.espressif.com/en/support/download/other-tools">Espressif Flash Download Tool</a>. Download the tool and open the tool in <b>Developer Mode</b>&nbsp;to start the Flash Download Tool.</p>
+
+<p>In the image below I flashed my ESP32 with&nbsp;the ESP32_4M316k-<strong>factory</strong>.bin image. This image can be downloaded from the <a href="https://github.com/letscontrolit/ESPEasy/releases">ESPEasy download page</a>. Download the latest mega version and extract it to a location on your PC. Select the&nbsp;<strong>factory</strong>&nbsp;image and set the location to&nbsp;<strong>0x00000</strong>. Last but not least, select the correct COM port and hit the START button to flash the image onto the ESP32.</p>
+
+<p><img src="/files/2021-03/flash-download-tool.jpg?4e8faf961d" style="width: 400px; height: 639px;" /></p>
+
+<p>Restart the ESP32 by power cycling the board. After the boot proces, an ESP Easy SSID&nbsp;should be visible when you're searching for Wi-Fi networks on you mobile or PC. Log in with the password&nbsp;<strong>configesp</strong>. After the connection is sucessfully made, a browser will open and redirect you to the ESP Easy configuration page where you are able to configure the Wi-Fi SSID.</p>
+
+<p>Good luck! Share your ESPEasy project in the comments&nbsp;:-)</p>

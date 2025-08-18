@@ -1,0 +1,105 @@
+---
+date: "2018-01-10"
+title: Install CFSSL and CFSSLJSON - CloudFlare's KPI toolkit
+slug: install-cfssl-and-cfssljson-cloudflare-kpi-toolkit
+tags:
+- certificates
+- cloudflare
+summary: "I try to automate almost everything. I use Docker to containerize in-house developed software and run these containers on CentOS 7 machines. When you're using a modern CentOS 7 version, the XFS filesystems are configured correctly with d_type support activated. But when you want to run Docker containers on an older version of CentOS 7, d_type support could be disabled causing a lot of trouble when you're chowning and chmoding files in a container: files are not found or skipped, etc."
+---
+<p>The tools CFSSL and CFSSLJSON from CloudFlare make life a lot easier when you have to generate certificate signing requests (CSR), certificates, and keys on a regular basis, or you want to use it as a development tool to automate this for you.</p>
+
+<p>The installation of the tool is pretty straightforward:</p>
+
+<pre>
+<code class="language-bash">$ curl https://pkg.cfssl.org/R1.2/cfssl_linux-amd64 -o /usr/local/bin/cfssl
+$ curl https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64 -o /usr/local/bin/cfssljson
+$ chmod +x /usr/local/bin/cfssl /usr/local/bin/cfssljson</code></pre>
+
+<p>The tools are now ready-to-use!</p>
+
+<p>Generating a CSR is now super easy. First, create a JSON file and save it to disk:</p>
+
+<pre>
+<code class="language-json">{
+    "hosts": [
+        "www.my-awesome-company.com"
+    ],
+    "CN": "www.my-awesome-company.com",
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [{
+        "C": "NL",
+        "L": "Amsterdam",
+        "ST": "Noord-Holland",
+        "O": "My Company",
+        "OU": "Operations"
+    }]
+}</code></pre>
+
+<p>Then, use the CFSSL and CFSSLJSON tools to generate a CSR and key:</p>
+
+<pre>
+<code class="language-bash">cfssl genkey csr.json | cfssljson -bare my_awesome_company_com</code></pre>
+
+<p>Send the CSR to the CA to receive a signed certificate or sign it yourself:</p>
+
+<pre>
+<code class="language-bash">cfssl selfsign www.my-awesome-company.com csr.json | cfssljson -bare my_awesome_company_com</code></pre>
+
+<p>It's also possible to create your own CA. You need a CA JSON configuration file to enable signing and a JSON file to generate the certificate and key.</p>
+
+<p>ca-csr.json:</p>
+
+<pre>
+<code class="language-json">{
+  "CN": "Dev CA",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "NL",
+      "L": "Amsterdam",
+      "ST": "Noord-Holland"
+    }
+  ]
+}
+</code></pre>
+
+<p>And initialize the CA:</p>
+
+<pre>
+<code class="language-bash">cfssl gencert -initca ca-csr.json | cfssljson -bare ca –</code></pre>
+
+<p>Then create the ca-config.json to configure the signing and profiles:</p>
+
+<pre>
+<code class="language-json">{
+  "signing": {
+    "default": {
+      "expiry": "168h"
+    },
+    "profiles": {
+      "client": {
+        "expiry": "43800h",
+        "usages": [
+          "signing",
+          "key encipherment",
+          "client auth"
+        ]
+      }
+    }
+  }
+}
+</code></pre>
+
+<p>Generate new certificates using your own CA:</p>
+
+<pre>
+<code>cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=client my-cert.json | cfssljson -bare my_certificate</code></pre>
+
+<p>Done for now! Have fun generating CSR, certs, and keys using CFSSL and CFSSLJSON!</p>

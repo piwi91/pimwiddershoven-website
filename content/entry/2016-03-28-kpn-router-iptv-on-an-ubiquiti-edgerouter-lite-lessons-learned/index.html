@@ -1,0 +1,120 @@
+---
+date: "2016-03-28"
+title: KPN Routed IPTV on an Ubiquiti EdgeRouter Lite - Lessons Learned
+slug: kpn-router-iptv-on-an-ubiquiti-edgerouter-lite-lessons-learned
+tags:
+- kpn
+- iptv
+- ubiquiti
+- edgerouter
+summary: "In February 2016, I moved from Ziggo to KPN Fiber because of the higher upload speed and because fiber was available in my new home. I replaced the experiabox with my own hardware which was sometimes challenging. This post is about my lessons learned with KPN Fiber, Router IPTV and the Ubiquiti EdgeRouter Lite."
+---
+<p>In February 2016, I moved from Ziggo to KPN Fiber because of the higher upload speed and because fiber was available in my new home.<br />
+  I don't like the experiabox which is installed by default so I ordered an Ubiquiti EdgeRouter Lite.<br />
+  The Ubiquiti EdgeRouter Lite is capable of routing 500/500 Mbit connections and has many more advanced features.</p>
+  
+  <p>I found a very good HOWTO at <a href="https://kriegsman.io/2016/01/configuring-a-ubiquiti-edgerouter-lite-for-kpn/">Kriegsman.io</a> how to configure the Ubiquiti EdgeRouter with KPN Fiber.<br />
+  Unfortunately, not all configuration mentioned at that blog is best practice and possibly causes IPTV malfunction.</p>
+  
+  <h2>Add a second NAT translation to 10.16.0.0/16</h2>
+  
+  <p>Because the KPN IPTV platform is working on 213.75.112.0/21 and 10.16.0.0/16 so both subnets should be added to your NAT configuration.</p>
+  
+  <pre>
+  <code>nat {
+      rule 5000 {
+          description IPTV
+          destination {
+              address 10.16.0.0/16
+          }
+          log disable
+          outbound-interface eth0.4
+          protocol all
+          source {
+          }
+          type masquerade
+      }
+      rule 5001 {
+          description IPTV
+          destination {
+              address 213.75.112.0/21
+          }
+          log disable
+          outbound-interface eth0.4
+          protocol all
+          source {
+          }
+          type masquerade
+      }
+  }</code></pre>
+  
+  <h2>Check your static IP (error code 561)</h2>
+  
+  <p>If your IPTV decoder doesn't start but returns an error code 561, it can't connect to the KPN IPTV platform. This can have two reasons:</p>
+  
+  <ol>
+    <li>There is a rogue DHCP server on your network</li>
+    <li>Your static IP configuration is wrong</li>
+  </ol>
+  
+  <p>To check if there is a rogue DHCP server on your network, use this tool provided by Microsoft: <a href="http://blog.mir.net/2014/10/rogue-dhcp-server-detection-free-tool.html" target="_blank">http://blog.mir.net/2014/10/rogue-dhcp-server-detection-free-tool.html</a><br />
+  In my case, there wasn't a rogue DHCP server on my network, it was a wrong static IP configuration.</p>
+  
+  <p>To check if the static IP binds to an interface, open the EdgeRouter web interface, go to 'Routing' and check if the static route you defined is bound to your IPTV VLAN interface (eth0.4 in my configuration). If not, you can be 100 % sure the static IP configuration is wrong.</p>
+  
+  <p>Resolve this by running the following commands in your EdgeRouter:</p>
+  
+  <pre>
+  <code class="language-bash">sudo su
+  r_ip=$(show dhcp client leases | grep router | awk '{ print $3 }');
+  iptv_static=$(echo "set protocols static route 213.75.112.0/21 next-hop $r_ip")
+  echo -e "$iptv_static"
+  exit</code></pre>
+  
+  <p>This will return a command you can run in the EdgeRouter configure mode. Don't forget to remove the old static IP route!</p>
+  
+  <h2>Black screen</h2>
+  
+  <p>The IPTV decoder is booting up, the EPG is available, but the screen stays black? Probably the IGMP-proxy isn't doing its job.</p>
+  
+  <p>Kriegman.io defines the IGMP proxy as following:</p>
+  
+  <pre>
+  <code>protocols {
+      igmp-proxy {
+          interface eth0.4 {
+              alt-subnet 0.0.0.0/0
+              role upstream
+              threshold 1
+          }
+          interface eth1 {
+              alt-subnet 0.0.0.0/0
+              role downstream
+              threshold 1
+          }
+      }
+  }</code></pre>
+  
+  <p>This is WRONG because the upstream interface should define the IPTV subnets and the downstream shouldn't define any subnet.<br />
+  The corrected one:</p>
+  
+  <pre>
+  <code>protocols {
+      igmp-proxy {
+          interface eth0.4 {
+              alt-subnet 10.16.12.0/16
+              alt-subnet 213.75.0.0/16
+              role upstream
+              threshold 1
+          }
+          interface eth1 {
+              role downstream
+              threshold 1
+          }
+      }
+  }</code></pre>
+  
+  <p>And my IPTV was working again! :-)</p>
+  
+  <p>If you are in trouble with your Ubiquiti IPTV configuration, contact me on e-mail or send me a tweet on Twitter!</p>
+  

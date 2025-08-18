@@ -1,0 +1,195 @@
+---
+date: "2018-10-23"
+title: Use Kubernetes Certificate Manager to automatically add SSL/TLS certificates to ingresses
+slug: use-kubernetes-certificate-manager-to-automatically-add-ssl-tls-certificates-to-ingresses
+tags:
+- kubernetes
+- certificates
+- ingress
+- lets-encrypt
+summary: "Kubernetes Certificate Manager (cert-manager) is a native Kubernetes controller helping you to issue certificates from a variety of sources, such as Let's Encrypt, HashiCorp Valut, a signing keypair and self-signed. The Certificate Manager ensures certificates are valid and up-to-date, and attempt to renew certificates at a configured time before expiry."
+---
+<p>Kubernetes Certificate Manager (cert-manager) is a native Kubernetes controller helping you to issue certificates from a variety of sources, such as Let's Encrypt, HashiCorp Valut, a signing keypair and self-signed. The Certificate Manager ensures certificates are valid and up-to-date, and attempt to renew certificates at a configured time before expiry.</p>
+
+<p>The Kubernetes Certificate Manager is installed on the Kubernetes cluster using the Helm Chart. The Helm Chart is the recommended approach to install the Certificate Manager on Kubernetes.</p>
+
+<h2>Helm</h2>
+
+<p>"<em>Helm is a tool for managing Kubernetes charts. Charts are packages of pre-configured Kubernetes resources.</em>" and "<em>Helm is a tool that streamlines installing and managing Kubernetes applications. Think of it like apt/yum/homebrew for Kubernetes.</em>" - <em>Source: <a href="https://github.com/helm/helm" rel="nofollow">https://github.com/helm/helm</a></em></p>
+
+<p>Helm is the client-side component and is required to install Helm on a Kubernetes cluster. Tiller is the server-side component which is installed using Helm.</p>
+
+<h3>Install Helm</h3>
+
+<ol>
+	<li>Go to the Helm releases page and download the latest binary file: <a href="https://github.com/helm/helm/releases" rel="nofollow">https://github.com/helm/helm/releases</a>
+
+	<pre>
+<code>$ curl https://storage.googleapis.com/kubernetes-helm/helm-v2.11.0-linux-amd64.tar.gz -o ~/helm.tar.gz</code></pre>
+	</li>
+	<li>Extract the gzipped tar archive file to /usr/local/bin
+	<pre>
+<code>$ sudo tar -xzf ~/helm.tar.gz -C /usr/local/bin --strip-components=1</code></pre>
+
+	<p></p>
+	</li>
+	<li>
+	<p>Check if Helm is installed correctly by checking the version.</p>
+
+	<pre>
+<code>$ helm version
+
+Client: &amp;version.Version{SemVer:"v2.11.0", GitCommit:"2e55dbe1fdb5fdb96b75ff144a339489417b146b", GitTreeState:"clean"}
+Error: could not find tiller</code></pre>
+
+	<p>The error is there because we didn't install Tiller yet on our Kubernetes platform.</p>
+	</li>
+</ol>
+
+<p>When you've installed the Helm client correctly, we need to install the server component on the Kubernetes platform. The server component is named "Tiller" and is controlled using the "Helm" client.</p>
+
+<ol>
+	<li>Create a service account for the Tiller component that has cluster-admin privileges on the platform
+	<pre>
+<code>cat &lt;&lt;EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tiller
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: tiller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: tiller
+    namespace: kube-system
+EOF</code></pre>
+
+	<p></p>
+	</li>
+	<li>Install the server component "Tiller" on your Kubernetes platform
+	<pre>
+<code>$ helm init --service-account tiller
+
+# Or upgrade tiller
+$ helm init --upgrade --service-account tiller</code></pre>
+
+	<p></p>
+	</li>
+	<li>Check if Helm is installed correctly by checking the version
+	<pre>
+<code>$ helm version
+
+Client: &amp;version.Version{SemVer:"v2.11.0", GitCommit:"2e55dbe1fdb5fdb96b75ff144a339489417b146b", GitTreeState:"clean"}
+Server: &amp;version.Version{SemVer:"v2.11.0", GitCommit:"2e55dbe1fdb5fdb96b75ff144a339489417b146b", GitTreeState:"clean"}</code></pre>
+	</li>
+</ol>
+
+<h2>Certificate Manager</h2>
+
+<ol>
+	<li>
+	<p>Install the Certificate Manager in the kube-system namespace using Helm</p>
+
+	<pre>
+<code>$ helm install \
+    --name cert-manager \
+    --namespace kube-system \
+    stable/cert-manager</code></pre>
+
+	<p></p>
+	</li>
+	<li>
+	<p>Create a (Cluster)Issues (more docs @ <a href="https://cert-manager.readthedocs.io/en/latest/tutorials/acme/http-validation.html" rel="nofollow">https://cert-manager.readthedocs.io/en/latest/tutorials/acme/http-validation.html</a>)<br />
+	<em>Staging environment</em></p>
+
+	<pre>
+<code>apiVersion: certmanager.k8s.io/v1alpha1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  namespace: default
+spec:
+  acme:
+    # The ACME server URL
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    # Email address used for ACME registration
+    email: support@pimwiddershoven.nl
+    # Name of a secret used to store the ACME account private key
+    privateKeySecretRef:
+      name: letsencrypt-staging
+    # Enable the HTTP-01 challenge provider
+    http01: {}</code></pre>
+
+	<p><em>Production environment</em></p>
+
+	<pre>
+<code>apiVersion: certmanager.k8s.io/v1alpha1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  namespace: default
+spec:
+  acme:
+    # The ACME server URL
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # Email address used for ACME registration
+    email: support@pimwiddershoven.nl
+    # Name of a secret used to store the ACME account private key
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    # Enable the HTTP-01 challenge provider
+    http01: {}</code></pre>
+
+	<p></p>
+	</li>
+	<li>
+	<p>Create a service in Kubernetes which needs a ingress</p>
+	</li>
+	<li>
+	<p>Create an ingress for this service and add the <code>certmanager.k8s.io/cluster-issuer</code> annotation</p>
+
+	<pre>
+<code>apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  annotations:
+    # add an annotation indicating the issuer to use.
+    certmanager.k8s.io/cluster-issuer: letsencrypt-prod
+  name: myIngress
+  namespace: myIngress
+spec:
+  rules:
+  - host: myingress.com
+    http:
+      paths:
+      - backend:
+          serviceName: myservice
+          servicePort: 80
+        path: /
+  tls: # &lt; placing a host in the TLS config will indicate a cert should be created
+  - hosts:
+    - myingress.com
+    secretName: myingress-cert # &lt; cert-manager will store the created certificate in this secret</code></pre>
+
+	<p></p>
+	</li>
+	<li>
+	<p>That's it ! Check if the certificate is requested using kubectl</p>
+
+	<pre>
+<code>$ kubectl get certificate
+$ kubectl describe certificate $certificate-name</code></pre>
+
+	<p></p>
+	</li>
+</ol>
+
+<p>You are now capable to secure all ingress endpoints without any more hassle!</p>

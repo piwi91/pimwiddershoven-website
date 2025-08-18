@@ -1,0 +1,124 @@
+---
+date: "2021-02-14"
+title: Lightning speed development on Windows 10 with WSL 2, Docker, Terminal and Jetbrains IntelliJ/PyCharm/PHPStorm
+slug: lightning-speed-development-on-windows-10-with-wsl-2-docker-terminal-and-jetbrains-intellij-pycharm-phpstorm
+tags:
+- docker
+- wsl2
+- pycharm
+- phpstorm
+- intellij
+- terminal
+summary: "Developing on Windows was challenging before Microsoft introduced WSL 2. Running Linux Virtual Machines with SMB/CIFS shares mounted into Windows was the best solution I could come up before there were tools like Vagrant. But all these solutions have one common problem. They mounted a Windows volume in Linux or visa versa which resulted in (very) poor I/O performance. Fortunately, WSL 2 resolves all these issues by running Docker and IDE's like Jetbrains IntelliJ, PyCharm and PHPStorm in WSL 2."
+---
+<p>Untill this year, I mainly&nbsp;developed on a MacOS system when working for my own business. The development experience on MacOS was&nbsp;a lot better than developing on a Windows system because of the special needs that comes with web development. PHP, MySQL and a web server like Nginx, just work better on Linux based systems. The advantage of MacOS is that you are able to&nbsp;install all software locally using Homebrew. On Windows you need&nbsp;a Linux Virtual Machine to install Linux software. Mounting source code into a Linux Virtual Machines causes very poor I/O performance, especially when you work&nbsp;on large projects with a lot of (composer) packages and (frontend) libraries. Docker resolves some of these issues, but Docker on Windows is still running on a Hyper-V Virtual Machine. Mounting source code into a Docker container still causes&nbsp;very poor performance. Fortunately, WSL 2 enables us to resolve these issues by running Docker in WSL 2 aswell as your favorite Jetbrains IDE!</p>
+
+<h2>My setup</h2>
+
+<h3>Hardware</h3>
+
+<p>I develop&nbsp;on a Lenovo Yoga AMD Ryzen 4800U laptop with 16 GB of memory and 512 GB of NVME SSD. This laptop combines a lot of processing power with excellent battery performance in a tiny slimbook. I like!</p>
+
+<h3>Software</h3>
+
+<p>The minimum software I use for development tasks are WSL 2 with Ubuntu 20.04 LTS installed, Docker for Windows on WSL 2, Microsoft Terminal and Jetbrains IntelliJ, PyCharm and PHPStorm. The IDE's are running inside WSL 2 to have the best performance possible.</p>
+
+<h2>Installation manual</h2>
+
+<p>Start by installing the Windows features Windows Subsystem Linux and Virtual Machine Platform on your system. Open a Powershell shell as administrator and execute the two commands below.</p>
+
+<pre>
+<code>dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart</code></pre>
+
+<p><strong>Reboot your system</strong>, otherwise you will experience issues.</p>
+
+<p>After the system has rebooted, set WSL 2 as default.</p>
+
+<pre>
+<code>wsl --set-default-version 2</code></pre>
+
+<p>Open the Microsoft Store and install Ubuntu <a href="https://www.microsoft.com/store/productId/9N6SVWS3RX71">20.04 LTS</a>, <a href="https://www.microsoft.com/store/productId/9N0DX20HK701">Terminal</a>, and <a href="https://www.microsoft.com/store/productId/9NLP712ZMN9Q">X410</a>. X410 is not free, and some free alternatives are available (Google is your friend), but X410 just works and it costs only € 10,-.</p>
+
+<p>"Open" Ubuntu 20.04 LTS by clicking on the icon in the start menu. The first time, Ubuntu&nbsp;installs itself in WSL 2 and&nbsp;asks your to create a user. This user is used in WSL 2 and the password is used to become root using&nbsp;<em>sudo</em>.</p>
+
+<p>Start&nbsp;X410&nbsp;(it won't start automatically) and configure&nbsp;it to allow public access (right mouse button on the icon in task bar). Then, permit access through the Windows Firewall. If the firewall is not configured correctly, X410 won't work in WSL 2. If you encounter any issues with X410, or you want to automatically start it on boot, check out the <a href="https://x410.dev/cookbook/">X410 cookbook</a>.</p>
+
+<p>Open Microsoft Terminal and open a new tab connecting to WSL 2 (CTRL+SHIFT+3).</p>
+
+<p>Configure WSL 2 to use X410 by adding the following line in&nbsp;<em>~/.bashrc</em>&nbsp;(create this file if it doesn't exist).</p>
+
+<pre>
+<code class="language-bash">export DISPLAY=$(awk '/^nameserver/ {print $2; exit;}' &lt;/etc/resolv.conf):0.0</code></pre>
+
+<p>To be able to run Docker containers we need Docker for Windows. Get it from <a href="https://hub.docker.com/editions/community/docker-ce-desktop-windows/">Docker Hub</a> and install it.</p>
+
+<p>When you're running Windows 10 <strong>Home</strong>, WSL 2 integration is automatically enabled because this edition of Windows doesn't support Hyper-V. When running Windows 10&nbsp;<strong>Pro</strong>&nbsp;or higher, enable WSL 2 on&nbsp;the Docker settings page. For&nbsp;<strong>both editions</strong>, go to the Docker settings&nbsp;<u>resources</u>&nbsp;page and enable integration for&nbsp;the Ubuntu distro.</p>
+
+<p>Check in your terminal if you can access the Docker engine.</p>
+
+<pre>
+<code>docker ps</code></pre>
+
+<p>It should return an empty table.</p>
+
+<pre>
+<code>CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+</code></pre>
+
+<p>Try to run a Docker container to test if everything works as expected.</p>
+
+<p>To actually develop, we need an IDE. I'm a huge fan of Jetbrain InelliJ, Pycharm and PHPStorm and all those IDE's can be installed on WSL 2. The main reason we install the IDE in WSL 2 is because of performance. While you are able to use source code located on Windows in WSL 2, the performance is not great. Visa versa, using source code located in WSL 2 on Windows, uses a CIFS mount which is not recommended by Jetbrains.</p>
+
+<p>Download the latest <a href="https://www.jetbrains.com/phpstorm/download/#section=linux">PHPStorm</a>, <a href="https://www.jetbrains.com/pycharm/download/#section=linux">PyCharm</a> or <a href="https://www.jetbrains.com/idea/download/#section=linux">IntelliJ</a> version from the Jetbrains website directly into Ubuntu. In this example I'm using PHPstorm, but the installation process is the same for Pycharm and IntelliJ.</p>
+
+<pre>
+<code>wget https://download.jetbrains.com/webide/PhpStorm-2020.3.2.tar.gz</code></pre>
+
+<p>Create a new directory in&nbsp;<em>/opt</em>&nbsp;and extract the tarball in it.</p>
+
+<pre>
+<code>sudo mkdir -p /opt/phpstorm
+sudo tar -xzvf PhpStorm-2020.3.2.tar.gz -C /opt/phpstorm</code></pre>
+
+<p>Check that X410 is running and launch PHPstorm.</p>
+
+<pre>
+<code>/opt/phpstorm/PhpStorm-203.7148.74/bin/phpstorm.sh</code></pre>
+
+<p>If X410 and the firewall&nbsp;are&nbsp;configured correctly, PHPStorm will start a new X410 window and you're good to go!</p>
+
+<p>I created an alias in my&nbsp;<em>.bashrc</em>&nbsp;file so I'm able to launch PHPstorm without I have to remember the full path to the sh file.</p>
+
+<pre>
+<code>alias phpstorm='/opt/phpstorm/PhpStorm-203.7148.74/bin/phpstorm.sh &gt; /dev/null 2&gt;&amp;1 &amp;'</code></pre>
+
+<p>To improve performance (and to fix the file sync complaints by PHPStorm), install inotify and increase the max amount of file watches in&nbsp;<em>/etc/sysctl.conf</em>.</p>
+
+<pre>
+<code>sudo apt install inotify-tools
+sudo sh -c "echo \"fs.inotify.max_user_watches = 524288\" &gt;&gt; /etc/sysctl.conf"
+sudo sysctl -p</code></pre>
+
+<p>Now, you're ready to start developing! But... the Microsoft Terminal could be configured a bit better. I'm a fan of Oh My Zsh and found <a href="https://blog.nillsf.com/index.php/2020/02/17/setting-up-wsl2-windows-terminal-and-oh-my-zsh/">this blog post of NillsF</a> very interesting.</p>
+
+<p>Happy developing!</p>
+
+<h2>Optional</h2>
+
+<h3>Scaling on high DPI screens</h3>
+
+<p>On some systems you might have scaling issues. To resolve this, add the following two lines to your&nbsp;<em>.bashrc</em>.</p>
+
+<pre>
+<code>export QT_SCALE_FACTOR=2
+export GDK_SCALE=2</code></pre>
+
+<h3>Extra packages to enable PHPstorm preview functionality</h3>
+
+<p>If you want to use the markdown (or other markup language) preview functionality, you need some additional packages installed.</p>
+
+<pre>
+<code class="language-bash">sudo apt install libnss3 libatk-bridge2.0-0 libxcursor1 libgbm1 libxss1 libpangocairo-1.0-0 libscups2</code></pre>
+
+<p></p>

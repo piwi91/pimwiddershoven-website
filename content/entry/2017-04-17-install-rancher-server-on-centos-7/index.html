@@ -1,0 +1,151 @@
+---
+date: "2017-04-17"
+title: Install Rancher Server on CentOS 7
+slug: install-rancher-server-on-centos-7
+tags:
+- docker
+- rancher
+- centos
+summary: "Do you want to use Docker containers in production on a CentOS 7 machine, but you think it is hard? Then have a look at Rancher! Rancher is a container management platform to deploy docker containers in a production environment very easily."
+---
+<p>Every day, more people are using containerization software like Docker. Using Docker containers in a production environment can be hard, but Rancher fills in the gap by providing us a powerful platform to run Docker containers in production.</p>
+
+<p>We use CentOS 7, a Redhat based operating system including the YUM packet manager. We are going to install a single node Rancher server on the CentOS 7 machine to run a few docker containers on it. Let's start!</p>
+
+<h2>CentOS 7</h2>
+
+<p><a href="http://isoredirect.centos.org/centos/7/isos/x86_64/CentOS-7-x86_64-Minimal-1611.iso">Get a copy of CentOS 7 from their website</a> and install it onto your machine. Don't use the default partitioning scheme and change it in the setup of CentOS 7. Because CentOS 7 uses the LVM device mapper, it is possible to increase and decrease the amount of storage if your storage needs are changing in the future.</p>
+
+<p>I used the following LVM partitioning:</p>
+
+<ul>
+	<li>/boot (default)</li>
+	<li>/ = 50 GB (HDD)</li>
+	<li>/home = 10 GB (HDD)</li>
+	<li>/var/lib/docker = The rest (at least 100 GB)</li>
+</ul>
+
+<p>The rest of the installation is simple. Just follow the setup wizard and configure as much as possible.</p>
+
+<h2>Pre-requirements</h2>
+
+<p>Before we're going to install Rancher, we have to do some configuring and we need to install some extra packages.</p>
+
+<p>If you haven't configured the network yet, do it now.</p>
+
+<pre>
+<code class="language-bash">$ sudo nmtui</code></pre>
+
+<p></p>
+
+<p>Then, we configure the hostname of the machine and restart the systemd-hostnamed service.</p>
+
+<pre>
+<code class="language-bash"># sudo hostnamectl set-hostname &lt;hostname&gt;
+$ sudo hostnamectl set-hostname rancher01
+$ sudo systemctl restart systemd-hostnamed</code></pre>
+
+<p>When you used the minimal ISO, an OpenSSH-server isn't available by default, so we have to install it.</p>
+
+<pre>
+<code class="language-bash">$ sudo yum install openssh -y</code></pre>
+
+<p>Now all pre-requirements are met, and we're ready to install Docker.</p>
+
+<h2>Docker</h2>
+
+<p>Before we install the Rancher server, we have to install the docker machine. We install docker using the YUM packet manager. The default CentOS repository has only an outdated docker machine available, so we have to add the docker CentOS repository to get the latest stable version of Docker.</p>
+
+<pre>
+<code class="language-bash">$ sudo yum install yum-utils -y
+$ sudo yum-config-manager \
+    --add-repo \
+    https://download.docker.com/linux/centos/docker-ce.repo
+$ sudo yum makecache fast</code></pre>
+
+<p>Now we're ready to install the docker machine itself.</p>
+
+<pre>
+<code class="language-bash">$ sudo yum install docker-ce</code></pre>
+
+<p>The docker daemon binds to a Unix socket instead of a TCP port. By default that Unix socket is owned by the user root and other users can only access it using sudo. The docker daemon always runs as the root user.<br />
+If you don’t want to use sudo when you use the docker command, create a Unix group called docker and add users to it. When the docker daemon starts, it makes the ownership of the Unix socket read/writable by the docker group.</p>
+
+<pre>
+<code class="language-bash">$ sudo groupadd docker
+$ sudo usermod -aG docker &lt;youruser&gt;</code></pre>
+
+<p>Check which users are added to the docker group.</p>
+
+<pre>
+<code class="language-bash">$ getent group docker</code></pre>
+
+<p>Start the Docker service.</p>
+
+<pre>
+<code class="language-bash">$ systemctl start docker</code></pre>
+
+<p>And configure it to start at boot.</p>
+
+<pre>
+<code class="language-bash">$ sudo systemctl enable docker</code></pre>
+
+<p>When Docker is installed and running, it is time to install the Rancher server.</p>
+
+<h2>Install Rancher server</h2>
+
+<p><a href="http://https://docs.rancher.com/rancher/v1.5/en/installing-rancher/installing-server/#single-container">Check out the rancher server installation guide</a>.</p>
+
+<p>You have a few options:</p>
+
+<ul>
+	<li>Install rancher server in a single container (including the database)</li>
+	<li>Install rancher server with an extern database</li>
+	<li>Install rancher server and mount the MySQL data volume</li>
+</ul>
+
+<p>Your first option is to boot up Rancher server in a single container. The MySQL database is available in this container and is used by Rancher to store all the configuration in it.</p>
+
+<pre>
+<code class="language-bash">$ docker run -d --restart=unless-stopped -p 8080:8080 rancher/server:stable</code></pre>
+
+<p>The second option is to use an external database. I used a second MySQL container for the MySQL database and linked it to the Rancher server container.</p>
+
+<pre>
+<code class="language-bash">$ docker run -d --name rancher-mysql --restart=unless-stopped -e MYSQL_ROOT_PASSWORD=&lt;password&gt; -e MYSQL_DATABASE=cattle mysql:5.7
+$ docker run -d --restart=unless-stopped --link rancher-mysql:rancher-mysql -p 8080:8080 rancher/server:stable --db-host rancher-mysql --db-port 3306 --db-user root --db-pass &lt;password&gt; --db-name cattle</code></pre>
+
+<p>Option 3 maps the MySQL data directory to the host.</p>
+
+<pre>
+<code class="language-bash">$ docker run -d -v &lt;path&gt;:/var/lib/mysql --restart=unless-stopped -p 8080:8080 rancher/server:stable</code></pre>
+
+<p>Rancher server uses port 8080 for the web interface. Configure the firewall to allow port 8080 and reload it.</p>
+
+<pre>
+<code class="language-bash">$ sudo firewall-cmd --zone=public --add-port=8080/tcp --permanent
+$ sudo firewall-cmd --reload</code></pre>
+
+<p>Check if the port is configured correctly.</p>
+
+<pre>
+<code class="language-bash">$ sudo firewall-cmd --list-ports</code></pre>
+
+<p>Check if ipv6 forwarding is enabled, otherwise it is possible that you can't connect to the Rancher web interface because Docker binds ports to IPv6 when available.</p>
+
+<pre>
+<code class="language-bash">$ sudo sysctl -a | grep net.ipv6.conf.all.forwarding</code></pre>
+
+<p>If IPv6 forwarding is disabled, change the /etc/sysctl.conf configuration file to enable it.</p>
+
+<pre>
+<code>net.ipv6.conf.all.forwarding=1</code></pre>
+
+<p>If you've changed the configuration, reboot the server to reload the configuration.</p>
+
+<pre>
+<code class="language-bash">$ sudo reboot</code></pre>
+
+<p>If everything went well, you're ready to use the Rancher server. Go to http://&lt;your ip&gt;:8080 and configure user management.</p>
+
+<p>If you found this post useful, or if you have any questions, leave a comment!</p>

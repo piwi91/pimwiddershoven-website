@@ -1,0 +1,52 @@
+---
+date: "2018-03-09"
+title: Extend Kubernetes Persistent Volumes
+slug: extend-kubernetes-persistent-volumes
+tags:
+- kubernetes
+- storage
+summary: "In Kubernetes it is possible to use Persistent Volumes to add persistent storage to your Docker containers. When creating a Persistent Volume (Claim) you have to configure a storage type and storage capacity. When your application gets successful and your storage exceeds the limits, you have to extend the volume or create a new persistent volume. The latter isn't a feasible solution in a production environment, but extending a persistent volume isn't supported out-of-the-box in Kubernetes. There is a solution though! Extending the volume outside Kubernetes!"
+---
+<p>Persistent volumes are immutable after creation in Kubernetes. Extending existing persistent volumes isn't possible in Kubernetes itself, but we can extend the volume outside Kubernetes by mounting a volume to a Linux host. In the Linux host, we'll use the <em>resize2fs</em> command to extend the volume, after which we will mount the volume again to the Kubernetes cluster.</p>
+
+<p>I'm using an OpenStack provider and I have configured the OpenStack Kubernetes integration. This allows me to claim persistent volumes dynamically. Each Persistent Volume Claim (PVC) gets a unique identifier (UUID) and is prefixed with <em>pvc-</em> in the OpenStack volume overview. So, before we can extend the volume, we have to figure out which PVC is the correct one. This can be done using <em>kubectl</em> :</p>
+
+<pre>
+<code class="language-bash">$ kubectl get pvc</code></pre>
+
+<p>Because you can't resize mounted volumes, we have to unmount the volume first. To do this, you have to scale down the pod in Kubernetes, which will lead to unmounting the volume from the host. Extend the volume size using the OpenStack CLI or OpenStack Web UI. Then mount the volume to a Linux host (can be a default CentOS machine) and login to this machine.</p>
+
+<p>Check if the disk is mounted to the host and has the new size.</p>
+
+<pre>
+<code class="language-bash">$ fdisk -l
+$ lsblk</code></pre>
+
+<p>In my case, the disk is available as <em>/dev/sdb<strong> </strong></em></p>
+
+<p>Mount the disk to a volume:</p>
+
+<pre>
+<code class="language-bash">$ mount /dev/sdb /mnt/disk</code></pre>
+
+<p>Check the size, which will be the "old" size:</p>
+
+<pre>
+<code class="language-bash">$ df -h</code></pre>
+
+<p>Extend the filesystem using <em>resize2fs</em>:</p>
+
+<pre>
+<code class="language-bash">$ resize2fs /dev/sdb</code></pre>
+
+<p>And re-check the size. If everything went OK the filesystem has the new size:</p>
+
+<pre>
+<code class="language-bash">$ df -h</code></pre>
+
+<p>Unmount the disk in the Linux host and in OpenStack. Then scale up the Kubernetes pod to re-attach the extended PVC to the pod.</p>
+
+<pre>
+<code class="language-bash">$ unmount /mnt/disk</code></pre>
+
+<p><strong>Note: </strong>The PVC capacity won't update! So when you had 20 GB configured when creating the PVC, it will stay 20 GB even if the filesystem is 50 GB!</p>

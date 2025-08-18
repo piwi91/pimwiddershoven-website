@@ -1,0 +1,93 @@
+---
+date: "2015-11-20"
+title: Introduction to StashPHP
+slug: introduction-to-stashphp
+tags:
+- php
+- stashphp
+- cache
+summary: "Stash is a PHP library and makes it easy to cache the results of expensive code, like database queries or external API calls, in a hierarchical way with interchangeable back ends."
+---
+<p><em>Stash is a PHP library that makes it easy to cache the results of expensive code, like database queries or external API calls, in a hierarchical way with interchangeable back ends.</em></p>
+
+<p style="text-align: center;"><em><img alt="" src="/files/2015-11/4jq3s.png" style="width: 485px; height: 250px;" /></em></p>
+
+<h2>Why you should use Stash as your caching system</h2>
+
+<blockquote>There are only two hard things in Computer Science: cache invalidation and naming things.<br />
+-- Phil Karlton</blockquote>
+
+<p>Naming things and cache invalidation was the main problem I encountered in a large PHP application with a lot of expensive code, like data aggregation and database queries. Caching these functions was rather easy and the first approach was to invalidate on TTL expiration which initially worked out OK... until the product owner changed some settings and he had to wait for the invalidation ;-)</p>
+
+<p>So I had to invalidate these cache keys to do some new calculations, and this is a very hard thing if you do a lot of caching without a consistent naming strategy. The solution would be simple: use a file/directory based naming strategy and invalidate paths recursively.</p>
+
+<p>This is where Stash comes into play! Stash enables me to cache data in a hierarchical way, like the folders in a file system, which allows me to group related items together and invalidate a group if something changes.</p>
+
+<p>Example: I have a user with settings and I cache these settings in 'user/{userId}/settings'. If I want to invalidate the whole user I can invalid 'user/{userId}' and every cache item in this "folder" is invalidated.</p>
+
+<h2>There is more...</h2>
+
+<ul>
+	<li>Stash supports interchangeable back ends: In Memory (the default), Memcache(d), Redis, APC and the file system</li>
+	<li>Stash supports even multiple back ends by using the multi driver!</li>
+	<li>Use the BlackHole driver for unit testing</li>
+	<li>It prevents dog piling or cache stampede by locking a cache item when refreshing it</li>
+	<li>Optionally regenerate cache items before it misses</li>
+</ul>
+
+<h2>Stash in action!</h2>
+
+<p>Stash consists of Pools with an injected Driver (or more drivers when using the MultiDriver) containing Items.</p>
+
+<p>The <strong>Driver </strong>class implements a caching system and performs the actual get, set, delete, etc. task.</p>
+
+<p>The <strong>Pool </strong>class is a specific grouping of cache items which you can perform a few tasks on like flushing, purging and creating items.</p>
+
+<p>The <strong>Item </strong>class represents a single cache item in a pool having a unique key and can perform tasks like getting, setting and removing a cache item from the caching software used.</p>
+
+<p>Everything glued together gives you a powerful cache implementation for your heavy used PHP application:</p>
+
+<pre>
+<code class="language-php">// Create a new pool and use Memcache as driver
+$pool = new Pool(new Memcache([['127.0.0.1', '11211']]));
+// Set a namespace for this pool
+$pool-&gt;setNamespace('test');
+
+// Get a cache representation from the pool
+$test123 = $pool-&gt;getItem('model/test/123');
+
+// Get the value from the storage (Memcache)
+$data = $test123-&gt;get();
+
+// Check if it is a hit or a miss
+if ($test123-&gt;isMiss() === true) {
+    // Lock the cache item to prevent dog piling
+    $test123-&gt;lock();
+    // Expensive function call
+    $data = 'stuff';
+    // Set the data and done!
+    $test123-&gt;set($data);
+}
+
+return $data;</code></pre>
+
+<p>Nested invalidation is possible if the keys are defined as a file based system, in my eyes the real power of Stash:</p>
+
+<pre>
+<code class="language-php">$userDetail1 = $pool-&gt;getItem('model/user/profile');
+$userDetail1-&gt;set('some data');
+$userDetail2 = $pool-&gt;getItem('model/user/info');
+$userDetail2-&gt;set('some data');
+$userDetail3 = $pool-&gt;getItem('model/user/messages');
+$userDetail3-&gt;set('some data');
+$userDetail4 = $pool-&gt;getItem('model/user/settings');
+$userDetail4-&gt;set('some data');
+
+// Invalidate everything with one single invalidation call
+$pool-&gt;getItem('model/user')-&gt;clear();</code></pre>
+
+<h2>Stash details</h2>
+
+<p>The <a href="https://github.com/tedious/Stash" target="_blank">Stash PHP library</a> and <a href="https://github.com/tedious/TedivmStashBundle" target="_blank">Stash Symfony2 Bundle</a> are hosted on Github and can be installed with Composer <em>tedivm/stash</em> or <em>tedivm/stash-bundle</em>. Documentation is available at <a href="http://www.stashphp.com/" target="_blank">http://www.stashphp.com/</a>.</p>
+
+<p>I did a quick test with the Silex micro-framework and you can find my code at <a href="https://github.com/piwi91/stash-php-test/blob/master/app/app.php" target="_blank">Github</a>.</p>

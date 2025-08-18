@@ -1,0 +1,139 @@
+---
+date: "2016-12-02"
+title: Password complexity and blacklist in Symfony (optionally with FOSUserBundle)
+slug: password-complexity-and-blacklist-in-symfony-optionally-with-fosuserbundle
+tags:
+- php
+- symfony
+- security
+summary: "Password strength is a more and more important subject for (web) applications. I guess we have all read at least one time about user accounts got hijacked because the user used a password like '1234567890' and 'qwerty'. As developer, we can prevent this pretty easy by adding validation on the user password."
+---
+<p>There are many blog posts about <a href="https://www.teamsid.com/worst-passwords-2015/" target="_blank">"worst passwords"</a> and lists of <a href="http://web.archive.org/web/20130605082350/http://www.isdpodcast.com:80/resources/62k-common-passwords/" target="_blank">"common passwords"</a> which indicate that users don't really think about safe and complex password like we developers do. To protect our users we have to require them to use a password which meets a set of requirements, like a minimal amount of characters and the usage of special characters. As a Symfony developer you can add validation on form fields rather easily, and also for user passwords.</p>
+
+<h2>RollerworksPasswordStrengthBundle</h2>
+
+<h3>Constraints</h3>
+
+<p>The RollerworksPasswordStrengthBundle is a password strength and blacklisting constraint bundle. The bundle provides three constraints out-of-the-box:</p>
+
+<ul>
+	<li>Strength validation</li>
+	<li>Requirements validation</li>
+	<li>Password blacklisting</li>
+</ul>
+
+<h4>Strength validation</h4>
+
+<p>Validates the user password on strength (weak, medium, strong, ...) and every strength has an own set of requirements:</p>
+
+<ul>
+	<li>1 - Very weak: any character is allowed (example: "1234567890" or "qwerty")</li>
+	<li>2 - Weak: at least one lower and one upper</li>
+	<li>3 - Medium: at least one lower, one upper and one number</li>
+	<li>4 - Strong: at least one lower, one upper, one number and one special character</li>
+	<li>5 - Very strong: at least one lower, one upper, one number, one special character and a minimal length of 12</li>
+</ul>
+
+<p>When the requirements are not met, a validation error is returned giving the user tips to achieve a stronger password.</p>
+
+<h4>Requirements validation</h4>
+
+<p>Validates the user password using explicitly defined requirements like letters, at least one upper or lower, special characters, etc. You can configure the following:</p>
+
+<ul>
+	<li>Minimal length of the password</li>
+	<li>If letters are required</li>
+	<li>If at least one upper and one lower are required</li>
+	<li>If numbers are required</li>
+	<li>If special characters are required</li>
+</ul>
+
+<p>When the requirements are not met, a validation error is returned for the requirement(s) you don't meet.</p>
+
+<h4>Password blacklisting</h4>
+
+<p>Sometimes there are environment where you want to forbid a password from usage (example: Admin!01). By using password blacklists you can create a list of passwords which shouldn't be accepted. You can do this be defining an array, SQLite DB or using other database supporting PDO.</p>
+
+<h3>Usage</h3>
+
+<p>The bundle is available in packagist and can be downloaded with composer:</p>
+
+<pre>
+<code class="language-bash">$ php composer.phar require rollerworks/password-strength-bundle</code></pre>
+
+<p>After the download is complete, add the bundle to your AppKernel.php:</p>
+
+<pre>
+<code class="language-php">$bundles = array(
+    // ...
+    new Rollerworks\Bundle\PasswordStrengthBundle\RollerworksPasswordStrengthBundle(),
+    // ...
+);</code></pre>
+
+<p>The bundle is now active and the constraints are ready to use.</p>
+
+<h4>Password strength</h4>
+
+<p>First we add the password strength validation constraint to our password field of the User entity. I'm not a fan of annotations so I use YAML configuration instead.</p>
+
+<p><em>AppBundle/Resources/config/validation.yml</em></p>
+
+<pre>
+<code>AppBundle\Entity\User:
+     properties:
+         plainPassword:
+             - Rollerworks\Bundle\PasswordStrengthBundle\Validator\Constraints\PasswordStrength:
+                 minLength: 8
+                 minStrength: 4</code></pre>
+
+<p>We defined a minimum length of 8 character and a strength level of 4 (Strong).</p>
+
+<p>Result: After clearing the cache I cannot use a weak password anymore when I change my password in the application.</p>
+
+<h4>Password blacklist</h4>
+
+<p>I want to use a SQLite database as my password blacklist database. I create a new SQLite file and add some configuration to my config.yml file:</p>
+
+<pre>
+<code># Password blacklist
+rollerworks_password_strength:
+    blacklist:
+        default_provider: rollerworks_password_strength.blacklist.provider.sqlite
+        providers:
+            sqlite:
+                dsn: "sqlite:%kernel.root_dir%/Resources/password_blacklist.db"</code></pre>
+
+<p>In the validation file I add the password blacklist constraint.</p>
+
+<p><em>AppBundle/Resources/config/validation.yml</em></p>
+
+<pre>
+<code>AppBundle\Entity\User:
+     properties:
+         plainPassword:
+             - Rollerworks\Bundle\PasswordStrengthBundle\Validator\Constraints\Blacklist: ~</code></pre>
+
+<h2>FOSUserBundle</h2>
+
+<p>The RollerworksPasswordStrengthBundle works fine with any implementation but probably you're using FOSUserBundle as your user management system. If you do, you should also add extra validation constraints for the <em>Hotflo\System\UserBundle\Form\Model\ChangePassword</em> class.</p>
+
+<p>Example:</p>
+
+<pre>
+<code>AppBundle\Entity\User:
+     properties:
+         plainPassword:
+             - Rollerworks\Bundle\PasswordStrengthBundle\Validator\Constraints\PasswordStrength:
+                 minLength: 8
+                 minStrength: 4
+             - Rollerworks\Bundle\PasswordStrengthBundle\Validator\Constraints\Blacklist: ~
+
+Hotflo\System\UserBundle\Form\Model\ChangePassword:
+     properties:
+         new:
+             - Rollerworks\Bundle\PasswordStrengthBundle\Validator\Constraints\PasswordStrength:
+                 minLength: 8
+                 minStrength: 4
+             - Rollerworks\Bundle\PasswordStrengthBundle\Validator\Constraints\Blacklist: ~</code></pre>
+
+<p>More documentation is available at the <a href="https://github.com/rollerworks/PasswordStrengthBundle" target="_blank">GitHub page of RollerworksPasswordStrengthBundle</a>.</p>

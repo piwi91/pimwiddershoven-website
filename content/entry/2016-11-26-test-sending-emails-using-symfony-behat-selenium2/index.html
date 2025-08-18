@@ -1,0 +1,153 @@
+---
+date: "2016-05-16"
+title: Robo PHP - A modern task runner
+slug: robo-php-a-modern-task-runner
+tags:
+- php
+- robo
+summary: "At work, I am responsible for version management and releasing software. The process of releasing a new version is always the same: creating a change log, adding this to the documentation and in GIT, update the version number, etc. etc. etc. This set me thinking, can I automate this process? And can I do that with my favorite language PHP? Yes I can, with Robo PHP!"
+---
+<p>At work, I am responsible for version management and releasing software. The process of releasing a new version is always the same: creating a change log, adding this to the documentation and in GIT, update the version number, etc. etc. etc. This set me thinking, can I automate this process? And can I do that with my favorite language PHP? Yes I can, with <a href="http://robo.li/" target="_blank">Robo PHP</a>!</p>
+
+<p>Robo PHP is a modern task runner written in PHP and has already some built-in tasks to have a running start.</p>
+
+<h2>Getting started</h2>
+
+<p>The tasks are saved in a RoboFile in your project. So you have to require the Robo library with <a href="https://getcomposer.org/" target="_blank">composer</a> in your project.</p>
+
+<p>Because I believe you don't need Robo in production, I have added it to the <em>require-dev </em>section of my composer.json file:</p>
+
+<pre>
+<code class="language-bash">composer require --dev codegyre/robo </code></pre>
+
+<p>If you don't want to add Robo as a dependency to your project, you can also install it globally:</p>
+
+<pre>
+<code class="language-bash">composer global require codegyre/robo</code></pre>
+
+<p>Or without composer: (caution: outdated!)</p>
+
+<pre>
+<code class="language-bash">wget http://robo.li/robo.phar</code></pre>
+
+<h2>First use</h2>
+
+<p>If robo is installed, you can use it just like <em>robo</em>.</p>
+
+<p>To begin you have to initialize a new RoboFile in your project:</p>
+
+<pre>
+<code class="language-bash">robo init</code></pre>
+
+<p>This will create a new <em>RoboFile.php</em> with a <em>RoboFile </em>class which extends <em>\Robo\Tasks</em>. The <em>\Robo\Tasks</em> class includes all bundled tasks of Robo which can be used immediately.</p>
+
+<h2>First task</h2>
+
+<p>After completing reading <a href="http://robo.li/getting-started/" target="_blank">the documentation</a> on the Robo website (which is <strong>v1.0.0-beta1!</strong>), I began to create my first task: release version.</p>
+
+<p>Something like this:</p>
+
+<pre>
+<code class="language-php">&lt;?php
+/**
+ * This is project's console commands configuration for Robo task runner.
+ *
+ * @see http://robo.li/
+ */
+class RoboFile extends \Robo\Tasks
+{
+    use \Task\VersionManagement\LoadTasks;
+    
+    /**
+     * Release a new  version.
+     *
+     * Releasing a new  version will execute the following tasks:
+     *
+     * 1. Create a new release branch
+     * 2. Adding the changelog changes to the CHANGELOG.md file
+     * 3. Change the version number in the src/Version.php and app/config/config.yml file to given version
+     * 4. Merge the release branch into the version branch
+     * 5. Tag the new version
+     * 6. Change the version number in the src/Version.php and app/config/config.yml file to -DEV
+     * 7. Push all changes to the server
+     *
+     * @param null|string $branch The VCS branch where the release will start from
+     * @param null|string $version The new version number
+     */
+    public function releaseVersion($branch = null, $version = null)
+    {
+        if (!$this-&gt;doesGitRepositoryExists()) {
+            $this-&gt;say('Current directory has no git repository. Are you in the correct directory?');
+            $this-&gt;say('Exiting ...');
+            return;
+        }
+
+        if (!$this-&gt;doesChangelogExists()) {
+            $this-&gt;say('CHANGELOG.md file does not exist. Creating it ...');
+            $this-&gt;_exec('touch CHANGELOG.md');
+            file_put_contents(
+                'CHANGELOG.md',
+                [
+                    'Changelog' . PHP_EOL,
+                    '=========' . PHP_EOL,
+                    PHP_EOL // Empty line
+                ]
+            );
+        }
+
+        $branch = $this-&gt;askBranch($branch);
+        $version = $this-&gt;askVersion($version);
+        $date = $this-&gt;askReleaseDate((new \DateTime())-&gt;format('d-m-Y'));
+        $nextVersion = $this-&gt;askNextVersion();
+        $changelog = $this-&gt;askChangelog();
+
+        $this
+            -&gt;taskRelease()
+            -&gt;version($version)
+            -&gt;at($date)
+            -&gt;onBranch($branch)
+            -&gt;withChangelog($changelog) // array
+            -&gt;andNextVersion($nextVersion)
+            -&gt;run();
+    }
+</code></pre>
+
+<p>First, I check if the project has an initialized GIT repository because I want to commit everything automatically. Then I check if there is already a <em>CHANGELOG.</em><em>md</em> file, and if not, I create one.</p>
+
+<p>The <em>ask</em> methods gather information from the user who runs the command, like which branch should be released (we have 2.0, 2.1, ... branches):</p>
+
+<pre>
+<code class="language-php">&lt;?php
+    /**
+     * Ask branch to create the release on.
+     *
+     * @param null|string $branch
+     *
+     * @return string
+     */
+    private function askBranch($branch = null)
+    {
+        if (is_null($branch)) {
+            $branch = $this-&gt;ask('Which branch you want to start a release from?');
+        }
+
+        if (!$this-&gt;confirm(sprintf('Is the branch %s the branch you want to start a new release from?', $branch))) {
+            $branch = $this-&gt;askBranch();
+        }
+
+        return $branch;
+    }</code></pre>
+
+<p>The <em>ask</em> and <em>confirm </em>methods are available in the default task sets of Robo.</p>
+
+<p>When all information is gathered, I start the task <em>Release</em> (not yet published, maybe later after refactoring some things!) and execute it by calling the <i>ru</i><em>n</em> method.</p>
+
+<h2>Wrapping up</h2>
+
+<p>You can automate every task with Robo PHP in your favorite language in "the OOP way". Created tasks can be reused because only the <em>RoboFile.php</em> is in your project. The actual tasks can be available in another composer package of yours which can be used in other projects too.</p>
+
+<p>The stable version of Robo PHP is <strong>v0.7.x</strong>. I tried the <strong>v1.0.0-beta1</strong> but this version isn't stable enough for me.</p>
+
+<p>The GitHub repository: <a href="https://github.com/Codegyre/Robo" target="_blank">https://github.com/Codegyre/Robo</a><br />
+The Robo website: <a href="http://robo.li/" target="_blank">http://robo.li/</a><br />
+Twitter: <a href="https://twitter.com/robo_php" target="_blank">@robo_php</a></p>

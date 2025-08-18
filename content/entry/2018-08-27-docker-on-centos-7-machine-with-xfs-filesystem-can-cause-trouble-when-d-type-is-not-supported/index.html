@@ -1,0 +1,66 @@
+---
+date: "2018-08-27"
+title: Docker on CentOS 7 machine with XFS filesystem can cause trouble when d_type is not supported
+slug: docker-on-centos-7-machine-with-xfs-filesystem-can-cause-trouble-when-d-type-is-not-supported
+tags:
+- docker
+- centos
+- xfs
+summary: "I try to automate almost everything. I use Docker to containerize in-house developed software and run these containers on CentOS 7 machines. When you're using a modern CentOS 7 version, the XFS filesystems are configured correctly with d_type support activated. But when you want to run Docker containers on an older version of CentOS 7, d_type support could be disabled causing a lot of trouble when you're chowning and chmoding files in a container: files are not found or skipped, etc."
+---
+<p>Docker, CentOS 7 and the XFS filesystem could be a trouble giving combination if you don't meet all the specifications of the overlay/overlay2 storage driver. The overlay storage driver relies on a technology called "directory entry type" (d_type) and is used to describe information of a directory on the filesystem.</p>
+
+<h2>The issue with CentOS 7, XFS and d_type support</h2>
+
+<p>Older CentOS 7 installations aren't configured with d_type support. This can cause some issues with <em>chown</em>ing and <em>chmod</em>ing, deleting and creating files and directories because the overlay storage driver can't find directory type (d_type) entries in the Linux kernel.</p>
+
+<p>You can check if your existing XFS filesystem has d_type enabled by running the <em>xfs_info</em> command. An example output:</p>
+
+<pre>
+<code class="language-bash">$ xfs_info /mount-point
+
+meta-data=/mount-point isize=512    agcount=4, agsize=2620928 blks
+         =                       sectsz=512   attr=2, projid32bit=1
+         =                       crc=1        finobt=0 spinodes=0
+data     =                       bsize=4096   blocks=10483712, imaxpct=25
+         =                       sunit=0      swidth=0 blks
+naming   =version 2              bsize=4096   ascii-ci=0 ftype=1
+log      =internal               bsize=4096   blocks=5119, version=2
+         =                       sectsz=512   sunit=0 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0</code></pre>
+
+<p>The 3rd column of the 6th line of the <em>xfs_info</em> output is the most interesting because it contains the parameter <em>ftype</em> which should be 1. When <em>ftype</em> is 0, d_type support is disabled. When it is 1, d_type support is enabled and you're safe to use the overlay(2) storage driver with Docker on an XFS filesystem.</p>
+
+<h2>My XFS filesystem has no d_type support, how to resolve this?</h2>
+
+<h3>Short answer</h3>
+
+<p>You've to create a new XFS filesystem with d_type support enabled.</p>
+
+<h3>Less short answer</h3>
+
+<p>You've two options: either you add a new disk and you create a new XFS partition on it, otherwise, you've to backup your existing data and recreate the XFS filesystem with d_type support enabled. Creating a new XFS filesystem with d_type enabled is as easy at the following command:</p>
+
+<pre>
+<code>$ mkfs.xfs -n ftype=1 /mount-point</code></pre>
+
+<p>Unfortunately, it isn't possible to enable d_type support on an existing filesystem.</p>
+
+<h2>Docker 1.13.x and higher</h2>
+
+<p>The newer Docker version (1.13.x and higher) will show you if d_type is enabled by running <em>docker info</em>:</p>
+
+<pre>
+<code>$ docker info
+
+...
+Server Version: 1.13.1
+Storage Driver: overlay2
+ Backing Filesystem: xfs
+ Supports d_type: true
+ Native Overlay Diff: true
+...</code></pre>
+
+<h2>Action required!</h2>
+
+<p>If d_type isn't supported, you've to change this as soon as possible to prevent strange filesystem issues with Docker containers.</p>

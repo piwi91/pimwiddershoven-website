@@ -1,0 +1,140 @@
+---
+date: "2017-12-03"
+title: Kubernetes cluster on OpenStack - Part 1
+slug: kubernetes-cluster-on-openstack-part-1
+tags:
+- kubernetes
+- openstack
+summary: "The last few weeks I'm working with Kubernetes and OpenStack. It's a steep learning curve to get a production-ready Kubernetes Cluster running on OpenStack, especially because I didn't want to use the available ready-to-use tools. In the next few blog posts, I want to share my experience how to run Kubernetes on an OpenStack platform."
+---
+<p><strong>Note/Update: This blog series never continued and is outdated.</strong></p>
+
+<p><strong>The last few weeks I'm working with Kubernetes and OpenStack. It's a steep learning curve to get a production-ready Kubernetes Cluster running on OpenStack, especially because I didn't want to use the available ready-to-use tools. In the next few blog posts, I want to share my experience how to run Kubernetes on an OpenStack platform.</strong></p>
+
+<p><strong>In this first blog post, I will discuss the infrastructure and how I use the OpenStack platform to run a production-ready Kubernetes cluster.</strong></p>
+
+<h2>Kubernetes</h2>
+
+<blockquote><a href="https://kubernetes.io/docs/concepts/overview/what-is-kubernetes/">Kubernetes</a> is an open-source system for automating deployment, scaling, and management of containerized applications.<br />
+It groups containers that make up an application into logical units for easy management and discovery. Kubernetes builds upon <a href="http://queue.acm.org/detail.cfm?id=2898444">15 years of experience of running production workloads at Google</a>, combined with best-of-breed ideas and practices from the community.</blockquote>
+
+<p>Kubernetes consists of master nodes and workers nodes. On those nodes, Docker containers can be scheduled by sending Kubernets configurations, like deployments, to the Kubernetes API Server. The Kubernetes scheduler and controller manager will use the configuration to get the Kubernetes platform to the desired state.</p>
+
+<p>To get a production-ready environment, you need at least three master nodes and two worker nodes. Kubernetes will ensure high availability and the desired state using the built-in components (controllers). Besides the compute nodes, you need also networking and storage. Kubernetes uses Load Balancers and Ingress endpoints to route network traffic to pods and leverages the OpenStack API to achieve this. Because Docker containers are ephemeral by design, you probably want also to have persistent storage. There are a ton of storage providers are built-in into Kubernetes, including the OpenStack Cinder provider.</p>
+
+<h2>OpenStack</h2>
+
+<blockquote>OpenStack software controls large pools of compute, storage, and networking resources throughout a datacenter, managed through a <a href="https://www.openstack.org/software/openstack-dashboard/">dashboard</a> or via the <a href="http://developer.openstack.org/">OpenStack API</a>. OpenStack works with <a href="https://www.openstack.org/marketplace/drivers/">popular enterprise and open source technologies</a> making it ideal for heterogeneous infrastructure.</blockquote>
+
+<p>I use an already existing OpenStack platform to deploy the Kubernetes platform. Because I live in The Netherlands, I've chosen CloudVPS as my Infrastructure As A Service (IAAS) provider. They support all we need: nova compute nodes, neutron networking (private networking, routers and load balancing) and cinder storage.</p>
+
+<p>To use the OpenStack API, you need to download the OpenStack RC file (or fill in all the details yourself) from the OpenStack Horizon Web UI.</p>
+
+<h2>Infrastructure</h2>
+
+<p>When you don't use any other tooling, you have to figure everything out yourself, including the infrastructure. You have a few options in my opinion:</p>
+
+<ul>
+	<li>Single Node Cluster: One master, which is also a worker node</li>
+	<li>Non-HA Cluster: One mater and one or more worker nodes</li>
+	<li>HA Cluster: Minimal three master nodes and two or more worker nodes</li>
+</ul>
+
+<p>All Kubernetes components are stateless, but this doesn't mean that you don't need any storage mechanism. Kubernetes stores everything in a key-value store called <a href="https://coreos.com/etcd/" target="_blank">Etcd</a>. You can decide to create dedicated Etcd servers, or to install them on the master nodes.</p>
+
+<p>You pods need storage too. Kubernetes integrates with the OpenStack volume API (cinder) to automatically provision volumes. Besides storage, Kubernetes will also leverage the OpenStack network API (neutron) to automatically configure load balancers. In the future, Kubernetes auto-scaler will also leverage the OpenStack compute API (nova) to automatically scale your worker nodes. This is still a work in progress though, but can already be used when your using the Kubernetes OpenStack Heat templates (which are deprecated since Kubernetes 1.8).</p>
+
+<h2>Add-ons</h2>
+
+<p>To get a fully functional and production-ready Kubernetes cluster, you need some add-ons:</p>
+
+<ul>
+	<li>Kube proxy</li>
+	<li>Kube DNS</li>
+	<li>Network component (Flannel)</li>
+	<li>Ingress controller (Nginx)</li>
+</ul>
+
+<p>These add-ons (except the ingress controller) are pods running in the kube-system namespace and running on all (master and worker) Kubernetes nodes. The ingress controller will run one the worker nodes, or maybe better, the infrastructure nodes? We didn't discussed infrastructure nodes yet, because Kubernetes itself doesn't have much infrastructure services to justify dedicated infrastructure nodes. In my case, I run the ingress controller on the worker nodes, but this will only work when you're using a load balancer service to automatically create and maintain the load balancer in OpenStack. Manually creating and maintaining the load balancer in OpenStack can be hard. If you can't use the load balancer integration, I recommend you to use PodAffinity to schedule these ingress controllers (nginx pods) on specific worker nodes, and confgure the load balancer manually using the OpenStack API (or Horizon web UI if the load balancer plugin is enabled).</p>
+
+<h2>Technical details</h2>
+
+<p>We configured the following OpenStack resources:</p>
+
+<ul>
+	<li>Private network: 10.0.0.0/16</li>
+	<li>Private router
+	<ul>
+		<li>Connected to the private network</li>
+		<li>Configured the network containing floating IP addresses as gateway (called "floating" in our case)</li>
+	</ul>
+	</li>
+	<li>Compute nodes
+	<ul>
+		<li>Master nodes (1 t/m 3)
+		<ul>
+			<li>3 CPU cores</li>
+			<li>4 GB memory</li>
+			<li>40 GB disk</li>
+			<li>25 GB docker volume (mounted at /var/lib/docker)</li>
+		</ul>
+		</li>
+		<li>Worker nodes (1 t/m 3 ... or more)
+		<ul>
+			<li>6 CPU cores</li>
+			<li>16 GB memory</li>
+			<li>40 GB disk</li>
+			<li>50 GB docker volume (mounted at /var/lib/docker)</li>
+		</ul>
+		</li>
+		<li>Bastion node (used to connect to the private network)
+		<ul>
+			<li>Connected to the external IPv4 network</li>
+			<li>Connected to the private network</li>
+		</ul>
+		</li>
+	</ul>
+	</li>
+</ul>
+
+<p>On those compute nodes we installed Kubernetes and dependencies:</p>
+
+<ul>
+	<li>Master nodes
+	<ul>
+		<li>CNI</li>
+		<li>Etcd</li>
+		<li>Docker</li>
+		<li>Kubelet (manifests)
+		<ul>
+			<li>API server</li>
+			<li>Controller manager</li>
+			<li>Scheduler manager</li>
+			<li>Proxy</li>
+		</ul>
+		</li>
+	</ul>
+	</li>
+	<li>Worker nodes
+	<ul>
+		<li>CNI</li>
+		<li>Docker</li>
+		<li>Kubelet (manifests)
+		<ul>
+			<li>Proxy</li>
+		</ul>
+		</li>
+	</ul>
+	</li>
+</ul>
+
+<p>And we deployed some pods:</p>
+
+<ul>
+	<li>Flannel network</li>
+	<li>Nginx ingress controller</li>
+</ul>
+
+<h2>More to come ...</h2>
+
+<p>In this blog post I only wanted to discuss the infrastructure decisions. In the next blog post I will install the Etcd nodes and Kubernetes master nodes.</p>

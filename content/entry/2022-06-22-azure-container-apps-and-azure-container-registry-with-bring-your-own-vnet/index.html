@@ -1,0 +1,351 @@
+---
+date: "2022-06-22"
+title: Azure Container Apps and Azure Container Registry with Bring Your Own Vnet
+slug: azure-container-apps-and-azure-container-registry-with-bring-your-own-vnet
+tags:
+- azure
+- azure-container-apps
+- bicep
+- azurerm
+- azure-container-registry
+summary: Since May 24th, Azure Container Apps is General Available in Microsoft Azure. With Azure Container Apps you are able to run containers in Microsoft Azure without the need to setup an Azure Kubernetes Service (AKS) cluster, but with the benefits of Kubernetes features.
+---
+<p>Azure Container Apps is a new Platform as a Service (PAAS) component in Microsoft Azure and is General Available since May 24th. With Azure Container Apps, you are able to run containers without the need to setup an Azure Kubernetes Service (AKS) cluster, but with the benefits of Kubernetes in the background.</p>
+
+<p>Azure Container Apps consists of a <em>Container App&nbsp;</em><em>Environment</em> and a&nbsp;<em>Container&nbsp;App</em>. The Environment is a secure boundary of groups&nbsp;of Container Apps, each running one or more containers. A&nbsp;Container App is the&nbsp;equivalent of a group of deployments in Kubernetes and runs one or more pods and/or revisions.</p>
+
+<p>An Azure Container App Environment logs to a Log Analytics Workspace and manages the Virtual Network. A Log Analytics Workspace and Virtual Network are both a requirement&nbsp;and can either be created when creating an Azure Container App in the Azure Portal, or is&nbsp;defined in an Azure Resource Manager (ARM) template or Bicep file (an example later in this post).</p>
+
+<p>The Azure Container App&nbsp;consists of two parts. One part (the&nbsp;<em>template</em>) is the versioned application definition of the Azure Container App. The second part (the&nbsp;<em>configuration</em>) is the non versioned application definition.</p>
+
+<p>The configuration&nbsp;of the versioned application definition defines the revision of an Azure Container App. When a Container App is initially deployed, an initial revision is automatically created by Azure. New revisions are automatically created when&nbsp;updating a configuration that is part of the versioned application definition (i.e. the version of an image), and can then be activated and used to send traffic to. How this works depends on the configuration of your Container App, either you have a single active revision, or you have multiple active revisions that receive traffic according to the configuration of the ingress load balancer (i.e. for A/B testing).</p>
+
+<p>In the non versioned application defintition part of the Container App, you're able to configure certain Ingress details (i.e. target port, transport protocol, internal or external, etc.), authentication details for registries (which includes support for managed identities), and whether you run in single or multiple active revision mode.</p>
+
+<h2>Deploy an Azure Container App</h2>
+
+<p>In this example we're going to deploy an Azure Container App that uses an image from a private Azure Container Registry instance. Authentication and authorization is done using a user-assigned managed identity, but a system-assigned managed identity will also work. We're using Bicep to deploy the Azure Resources using the Azure Resource Manager API.</p>
+
+<p>If you don't know Bicep, <a href="https://docs.microsoft.com/en-us/azure/azure-resource-manager/bicep/overview?tabs=bicep">have a look at the Microsoft Docs</a> to get familiar with it!</p>
+
+<pre>
+<code>targetScope = 'resourceGroup'
+
+param location string = resourceGroup().location
+
+var acrPullRoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d'
+
+resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2021-09-30-preview' = {
+  name: 'pwi-container-app-hello-world'
+  location: location
+}
+
+resource containerRegistry 'Microsoft.ContainerRegistry/registries@2022-02-01-preview' = {
+  name: 'pwicontainerregistry'
+  location: location
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    adminUserEnabled: false
+    anonymousPullEnabled: false
+  }
+}
+
+resource roleAssignmentContainerRegistry 'Microsoft.Authorization/roleAssignments@2020-10-01-preview' = {
+  name: guid(identity.id, containerRegistry.id, acrPullRoleDefinitionId)
+  scope: containerRegistry
+  properties: {
+    principalId: identity.properties.principalId
+    roleDefinitionId: acrPullRoleDefinitionId
+  }
+}
+
+resource virtualNetwork 'Microsoft.Network/virtualNetworks@2021-08-01' = {
+  name: 'pwi-vnet'
+  location: location
+  properties: {
+     addressSpace: {
+       addressPrefixes: [
+        '10.10.0.0/16'
+       ]
+     }
+     subnets: [
+      {
+        name: 'InfrastructureSubnet'
+        properties: {
+          addressPrefix: '10.10.0.0/23'
+        }
+      }
+     ]
+  }
+}
+
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2021-12-01-preview' = {
+  name: 'pwi-log-analytics-workspace'
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+  }
+}
+
+resource environment 'Microsoft.App/managedEnvironments@2022-03-01' = {
+  name: 'pwi-hello-world-environment'
+  location: location
+  properties: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logAnalytics.properties.customerId
+        sharedKey: listKeys(logAnalytics.id, '2021-12-01-preview').primarySharedKey
+      }
+    }
+     vnetConfiguration: {
+      internal: false
+      infrastructureSubnetId: virtualNetwork.properties.subnets[0].id
+     }
+  }
+}
+
+resource container 'Microsoft.App/containerApps@2022-03-01' = {
+  name: 'pwi-hello-world-container'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identity.id}': {}
+    }
+  }
+  properties: {
+    managedEnvironmentId: environment.id
+    // Versioned application definition
+    template: {
+      containers: [
+        {
+          image: '${containerRegistry.name}.azurecr.io/helloworld-http:latest'
+          name: 'helloworld-http'
+          probes: [
+            {
+              httpGet: {
+                port: 80
+              }
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 10
+        rules: []
+      }
+      volumes: []
+    }
+    // Non versioned application definition
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        allowInsecure: true
+        external: true
+        targetPort: 80
+        transport: 'http'
+      }
+      registries: [
+        {
+          server: '${containerRegistry.name}.azurecr.io'
+          identity: identity.id
+        }
+      ]
+    }
+  }
+}
+</code></pre>
+
+<p>Let's break down this 130 lines long example.</p>
+
+<pre>
+<code>targetScope = 'resourceGroup'
+
+param location string = resourceGroup().location
+
+var acrPullRoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d'</code></pre>
+
+<p>We set the&nbsp;<em>targetScope</em>&nbsp;to resourceGroup so that Bicep knows that is its context. <em>Lo</em><em>cation</em> is a parameter that you're able to override if you&nbsp;want, otherwise it will take the location from the resource group. And I define the resource ID of the Role Definition for the AcrPull role in a variable that is used in the role assignment resource later on.</p>
+
+<pre>
+<code>resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2021-09-30-preview' = {
+  name: 'pwi-container-app-hello-world'
+  location: location
+}</code></pre>
+
+<p>In this example I'm using a user-assigned managed identity so that I'm able to assign the AcrPull role to this identity right after the Azure Container Registry has been deployed.</p>
+
+<pre>
+<code>resource containerRegistry 'Microsoft.ContainerRegistry/registries@2022-02-01-preview' = {
+  name: 'pwicontainerregistry'
+  location: location
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    adminUserEnabled: false
+    anonymousPullEnabled: false
+  }
+}</code></pre>
+
+<p>A basic configuration of an Azure Container Registry with the default administrator user and anonymous pull access disabled.</p>
+
+<pre>
+<code>resource roleAssignmentContainerRegistry 'Microsoft.Authorization/roleAssignments@2020-10-01-preview' = {
+  name: guid(identity.id, containerRegistry.id, acrPullRoleDefinitionId)
+  scope: containerRegistry
+  properties: {
+    principalId: identity.properties.principalId
+    roleDefinitionId: acrPullRoleDefinitionId
+  }
+}</code></pre>
+
+<p>The user-managed identity gets the AcrPull role assigned on the just deployed Azure Container Registry. The&nbsp;<em>acrPullRoleDefinitionId</em>&nbsp;is the variable defined at the top of the Bicep file and the&nbsp;<em>principalId</em>&nbsp;is retrieved from the&nbsp;<em>identity</em>&nbsp;resource. This will also set an implicit dependency on the&nbsp;<em>idenitity</em>&nbsp;resource in ARM.</p>
+
+<pre>
+<code>resource virtualNetwork 'Microsoft.Network/virtualNetworks@2021-08-01' = {
+  name: 'pwi-vnet'
+  location: location
+  properties: {
+     addressSpace: {
+       addressPrefixes: [
+        '10.10.0.0/16'
+       ]
+     }
+     subnets: [
+      {
+        name: 'InfrastructureSubnet'
+        properties: {
+          addressPrefix: '10.10.0.0/23'
+        }
+      }
+     ]
+  }
+}</code></pre>
+
+<p>A virtual network is a requirement for the Azure Container App Environment so I'm creating one including a single subnet that I've called the&nbsp;<em>InfrastructureSubnet.</em></p>
+
+<pre>
+<code>resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2021-12-01-preview' = {
+  name: 'pwi-log-analytics-workspace'
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+  }
+}</code></pre>
+
+<p>A Log Analytics Workspace is also a requirement for the Azure Container App Environment. This is the minimal configuration using the pay-per-usage&nbsp;SKU.</p>
+
+<pre>
+<code>resource environment 'Microsoft.App/managedEnvironments@2022-03-01' = {
+  name: 'pwi-hello-world-environment'
+  location: location
+  properties: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logAnalytics.properties.customerId
+        sharedKey: listKeys(logAnalytics.id, '2021-12-01-preview').primarySharedKey
+      }
+    }
+     vnetConfiguration: {
+      internal: false
+      infrastructureSubnetId: virtualNetwork.properties.subnets[0].id
+     }
+  }
+}</code></pre>
+
+<p>Before you can deploy a Container App you need a Container App Environment. In the Azure Portal, this is automatically done for you, but using ARM or Bicep you've to define it yourself. We configure the&nbsp;<em>appLogsConfiguration</em>&nbsp;by getting the <i>customerId</i>&nbsp;and the&nbsp;<em>sharedKey</em>&nbsp;directly from the&nbsp;<em>logAnalytics</em>&nbsp;resource. The&nbsp;<em>vnetConfiguration</em>&nbsp;only needs to know if you want to setup a private environment (by setting&nbsp;<em>internal</em>&nbsp;to&nbsp;<em>true</em>) or you run publicly. The resourec ID of the subnet is retrieved from the&nbsp;<em>virtualNetwork</em>&nbsp;resource.</p>
+
+<pre>
+<code>resource container 'Microsoft.App/containerApps@2022-03-01' = {
+  name: 'pwi-hello-world-container'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identity.id}': {}
+    }
+  }
+  properties: {
+    managedEnvironmentId: environment.id
+    // Versioned application definition
+    template: {
+      containers: [
+        {
+          image: '${containerRegistry.name}.azurecr.io/helloworld-http:latest'
+          name: 'helloworld-http'
+          probes: [
+            {
+              httpGet: {
+                port: 80
+              }
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 10
+        rules: []
+      }
+      volumes: []
+    }
+    // Non versioned application definition
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        allowInsecure: true
+        external: true
+        targetPort: 80
+        transport: 'http'
+      }
+      registries: [
+        {
+          server: '${containerRegistry.name}.azurecr.io'
+          identity: identity.id
+        }
+      ]
+    }
+  }
+}</code></pre>
+
+<p>Eventually, we're able to deploy the Container App. The user-assigned managed identity is configured on this level so it's able to pull the container image from the registry that has anonymous pull access disabled. The Container App is linked to the Container App Environment that is created in the previous step, and in the end the versioned and non version application defintions are configured.</p>
+
+<p>The version application definition look like the configuration you're able to do in a Kubernetes Deployment manifest, but is limited to name, image, command, args, env, probes, resources, and volumeMounts. In this example we're using a helloworld-http container image that I've imported into the Container Registry using Azure CLI:</p>
+
+<pre>
+<code>az acr import --name pwicontainerregistry --source docker.io/strm/helloworld-http --image helloworld-http:latest</code></pre>
+
+<p>In the non versioned application definition the ingress details are configured, as well that only one active revision is allowed and that the user-assigned managed identity should be used while authenticating to the Azure Container Registry. Authenticating using an username and password would also be possible, but when staying within the Azure eco system, using a managed identity is more secure.</p>
+
+<p>Run this example using Azure CLI and Bicep. The example above is saved as&nbsp;<em>main.bicep</em>&nbsp;in the Azure CLI examples below.</p>
+
+<pre>
+<code>az group create --location westeurope --resource-group pwi-container-app-test
+az deployment group create --resource-group pwi-container-app-test --name deploy-container-app --template-file .\main.bicep
+az acr import --name pwicontainerregistry --source docker.io/strm/helloworld-http --image helloworld-http:latest</code></pre>
+
+<p>First a new resource group is created. Then a new deployment is created using this resource group. Note that this deployment will fail because the&nbsp;<em>helloworld-http</em>&nbsp;container image is not present. Import the container image from docker.io to the Azure Container Registry and run the deployment again. If everything goes well, a resource group is created including an user-assigned managed identity, an Azure Container Registry, a Log Analytics Workspace, a Virtual Network, and an Azure Container App Environment with an Azure Container App that is running the container image from the Azure Container Registry!</p>
+
+<h2>Limitations,&nbsp;considerations, and quircks</h2>
+
+<p>Azure Container Apps uses the Azure CNI network driver&nbsp;that is also available in Azure Kubernetes Service (AKS). The Azure CNI network drivers requires at least a /23 subnet. This means that each Azure Container App Environment also requires a /23 infrastructure subnet that does not overlap.</p>
+
+<p>Azure Container Apps runs on Kubernetes, but you don't have access to the API server or other Kubernetes services. If you need them, you have to setup an AKS cluster instead.</p>
+
+<p>Azure Container Apps uses internal subnets that should not overlap with the infrastructure or runtime subnets. By default, the 10.0.0.0/16 CIDR is reserved. You're able to override this, but if you don't define it, do be sure that you're using another IP range for both subnets.</p>
+
+<p>When a runtime subnet is provided in the ARM template or Bicep file, the deployment will fail with a worthless error saying that the&nbsp;"Managed environment failed to initialize due to managed clusters failed.".</p>
+
+<h2>Conclusion</h2>
+
+<p>Azure Container Apps is a really cool component that saves you the hassle to setup and maintain a Kubernetes cluster. At its current state, Azure container Apps is still a bit limited in functionality but&nbsp;very usable.&nbsp;When your application doesn't do a lot of fancy stuff, Azure Container Apps is maybe an option for you. But if you need the Kubernetes API, or access to certain objects (i.e. CRDs), you still need to use&nbsp;Azure Kubernetes Service (AKS) instead.</p>

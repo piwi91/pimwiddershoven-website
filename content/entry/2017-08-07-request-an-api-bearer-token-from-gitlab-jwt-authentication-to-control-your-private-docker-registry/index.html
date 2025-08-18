@@ -1,0 +1,85 @@
+---
+date: "2017-07-07"
+title: Request an API (bearer) token from GitLab JWT authentication to control your private Docker registry
+slug: request-an-api-bearer-token-from-gitlab-jwt-authentication-to-control-your-private-docker-registry
+tags:
+- docker
+- gitlab
+- jwt
+- docker-registry
+summary: "My continuous integration and continuous delivery pipeline use Docker containers and a private Docker registry to distribute and deploy my applications automatically. Unfortunately, the Docker command-line tool can't really control the Docker registry, actually, it is only capable of pushing and pulling image (tags). This is a bit frustrating because, when you're using your continuous integration pipeline to build containers, push them to the registry, and pull them again to run the QA, the registry will eat up all your disk space due the images are never removed. To clean up your 'mess', you have to remove the images manually, but it's way cooler (and simpler) to use the Docker registry API for this job."
+---
+<p>GitLab Continuous Integration enables you to fully automate image building, QA testing, and eventually, deploying the container to a review environment or even the production environment. But, as always, combining technology and full automation has its challenges, and one of them is cleaning up your "mess".</p>
+
+<p>My pipeline looks like this:</p>
+
+<ul>
+	<li>Stage 1 - build: Building my production Docker container and pushing it to the Docker registry</li>
+	<li>Stage 2 - QA: Pull the Docker container and run some tests</li>
+	<li>Stage 3 - Review: Deploy the Docker container to the review environment</li>
+	<li>Stage 4 - Production: Deploy the Docker container to the production environment (only "master")</li>
+</ul>
+
+<p>Stage 3, deploying a Docker container to a review environment is used to QA test the application by the product owner and other stakeholders before it goes into "master". The downside of this approach is that we are forced to push all images to the Docker registry because you don't really know which Docker image is used for the review environment. And when you work with a lot of people on separate features in separate branches, you can imagine that the number of pipelines can become huge which results in a lot of development images in the Docker registry.</p>
+
+<p>Unfortunately, the Docker Registry has only an API. The Docker command-line tool is only capable of pushing and pulling images from the Docker registry but isn't capable of removing them. End result: a full disk and a lot of outdated images.</p>
+
+<p>GitLab implements a GUI for the Docker registry. This can be used when you have a small number of Docker images. But if you're building 10 images an hour, manually removing them using the GitLab Docker registry GUI is just not working. Solution: Use the Docker registry API to delete images.</p>
+
+<p><strong>Retrieve an authentication token</strong></p>
+
+<p>I found out, it is quite hard to find documentation how to retrieve an API token from Gitlab when you're using the GitLab JWT authentication. But after some 2-3 hours of "Googling", I found some documentation on the Docker Docs about the <a href="https://docs.docker.com/registry/spec/auth/jwt/#getting-a-bearer-token" target="_blank">token authentication implementation in the Docker registry</a>. The scope is also very important, and details about the scope I found on the <a href="https://docs.docker.com/registry/spec/auth/scope/" target="_blank">token scope documentation page</a>.</p>
+
+<p>End result using curl:</p>
+
+<pre>
+<code class="language-bash">curl --user 'username:password' 'https://gitlab.domain.com/jwt/auth?client_id=docker&amp;offline_token=true&amp;service=container_registry&amp;scope=repository:your-repo-name:push,pull'</code></pre>
+
+<p>Some explanation:</p>
+
+<ul>
+	<li><strong>--user</strong> is used for basic authentication using your personal account credentials</li>
+	<li><strong>https://gitlab.domain.com/jwt/auth</strong> is the JWT authentication URL</li>
+	<li>The <strong>client_id</strong> is always <strong>docker</strong></li>
+	<li><strong>offline_token</strong> should be <strong>true</strong> (but I couldn't really figure out what it does...)</li>
+	<li><strong>service</strong> is always <strong>container_registry</strong></li>
+	<li>GitLab only supported the repository <strong>scope </strong>(as far I could test). Example: <em>repository:customer/application:push,pull</em><br />
+	At the moment, only <strong>push</strong> and <strong>pull</strong> are supported. Otherwise, you won't retrieve a valid token. This is an issue because this won't allow you to delete images... An issue and merge request are already created to resolve this in GitLab 9.5.</li>
+</ul>
+
+<p>The result of the call will be a JSON string containing a token. This token will be used as a bearer token in the communication with the Docker registry API.</p>
+
+<p><strong>Use the Docker registry API to retrieve a list of tags</strong></p>
+
+<p>The Docker registry API has a set of endpoints. One of them is to retrieve a list of tags for an image:</p>
+
+<pre>
+<code class="language-bash">curl -vvv -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' -H 'Authorization: Bearer your-token' https://registry.domain.com:5000/v2/your-repo-name/tags/list</code></pre>
+
+<p>Some explanation:</p>
+
+<ul>
+	<li><strong>-vvv</strong> is to debug the request</li>
+	<li>We'll set the correct content-type for this request using <strong>-H 'Accept: application/</strong><strong>vnd</strong><strong>.docker.distribution.manifest.v2+json'</strong></li>
+	<li>Because our Docker registry requires authentication, we pass the token retrieved in the previous request using <strong>-H 'Authorization: Bearer <em>your-token</em>'</strong></li>
+	<li>The base URL to the Docker registry is <strong>https://registry.domain.com:5000/v2/</strong></li>
+	<li>And to retrieve a list of tags for a specific repository and image, use <strong>your-repo-name/tags/list</strong></li>
+</ul>
+
+<p>The result of this call is again a JSON string containg a list of tags.</p>
+
+<p>To retrieve more details about a tag your can use the following call (you need this to retrieve the tag reference):</p>
+
+<pre>
+<code class="language-bash">curl -vvv -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' -H 'Authorization: Bearer your-token' https://registry.domain.com:5000/v2/your-repo-name/manifests/tag-reference</code></pre>
+
+<p><strong>Remove a tag or image</strong></p>
+
+<p>At the moment, the call is not possible in conjunction with GitLab 9.4 or earlier because of the bug previously mentioned. But, when that bug is fixed, you can remove a tag using the following call:</p>
+
+<pre>
+<code class="language-bash">curl -vvv -X DELETE -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' -H 'Authorization: Bearer your-token' https://registry.domain.com:5000/v2/your-repo-name/manifests/tag-reference</code></pre>
+
+<p>A full explanation about the available API endpoints is available at the Docker docs: <a href="https://docs.docker.com/registry/spec/api/" target="_blank">https://docs.docker.com/registry/spec/api/</a></p>
+
+<p>Thanks for reading, and if you have questions or feedback, leave a comment!</p>

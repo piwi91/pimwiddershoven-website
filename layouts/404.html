@@ -1,0 +1,10 @@
+{{ define "main" }}
+  <h1 class="mb-6 text-4xl font-extrabold">404 Page not found</h1>
+  <div class="prose dark:prose-invert">
+    <p>{{ "Oops... is seems that the page you're looking for does not exist :confused_face:" | emojify }}</p>
+  </div>
+  <h2 class="mt-8 text-2xl font-bold">{{ "Other articles that might be interesting :nerd_face:"  | emojify }}</h2>
+  {{ range first .Site.Params.homepage.recentLimit (.Paginate (where .Site.RegularPages "Type" "in" .Site.Params.mainSections) .Site.Params.homepage.recentLimit).Pages }}
+    {{ partial "article-link.html" . }}
+  {{ end }}
+{{ end }}
