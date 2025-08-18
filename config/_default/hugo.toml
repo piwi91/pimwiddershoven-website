@@ -11,8 +11,6 @@ enableRobotsTXT = true
 summaryLength = 0
 
 disqusShortname = 'pimwiddershoven'
-googleAnalytics = "G-68D7TN2CDP"
-
 
 [pagination]
   pagerSize = 10
@@ -31,3 +29,6 @@ googleAnalytics = "G-68D7TN2CDP"
 [services]
   [services.x]
     disableInlineCSS = true
+
+  [services.googleAnalytics]
+    id = 'G-68D7TN2CDP'
