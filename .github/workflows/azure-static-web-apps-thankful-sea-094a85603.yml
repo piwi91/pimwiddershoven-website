@@ -22,18 +22,6 @@ jobs:
         with:
           submodules: true
           lfs: false
-        
-      - name: Install OIDC Client from Core Package
-        run: npm install @actions/core@1.6.0 @actions/http-client
-      
-      - name: Get Id Token
-        uses: actions/github-script@v6
-        id: idtoken
-        with:
-           script: |
-               const coredemo = require('@actions/core')
-               return await coredemo.getIDToken()
-           result-encoding: string
       
       - name: Setup Hugo
         uses: peaceiris/actions-hugo@v2
@@ -54,7 +42,6 @@ jobs:
           ###### Repository/Build Configurations - These values can be configured to match your app requirements. ######
           # For more information regarding Static Web App workflow configurations, please visit: https://aka.ms/swaworkflowconfig
           app_location: "public" # App source code path
-          github_id_token: ${{ steps.idtoken.outputs.result }}
           skip_app_build: true
           ###### End of Repository/Build Configurations ######
 
