@@ -9,4 +9,10 @@ showPagination: false
 sharingLinks: ['']
 ---
 
-Do you want to reach out to me? Send me an e-mail at __pim [at] widdershoven [dot] nl__ and I'll get back to you as soon as possible.
+If you’d like to get in touch, whether it’s about cloud and platform architecture, DevOps, security, a project you’re working on or something else you think I might be interested in, feel free to reach out.
+
+The easiest way to reach me is by email:
+
+ __pim [at] widdershoven [dot] nl__ 
+
+I will get back to you as soon as I can
