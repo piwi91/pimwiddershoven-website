@@ -1,1 +1,1 @@
-Cloud DevOps Engineer and Solution Architect with great interest in tech and electronics!
+IT / Solution Architect | Engineer at Heart | Cloud, Platform, Security, DevOps
