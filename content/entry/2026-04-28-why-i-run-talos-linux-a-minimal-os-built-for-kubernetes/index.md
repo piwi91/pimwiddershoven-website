@@ -49,3 +49,85 @@ The whole thing is immutable. The root filesystem is read-only at runtime. There
 This is also why Talos works equally well in production and in a homelab. The model is the same on both ends. A managed Kubernetes vendor running thousands of clusters and a person running three nodes at home are interacting with the OS through the same gRPC API, applying the same machine config schema, doing the same image-swap upgrades. Same OS, same primitives, same guarantees. The blast radius of a 2am mistake is also dramatically smaller, because there's far less surface area to mess up.
 
 The first week of using Talos is mostly unlearning habits. You won't `tail -f` a log on a node. You'll `talosctl logs`. You won't edit a config file. You'll patch the machine config and re-apply. You won't drop into a container's host. You'll ask the API. It feels strict at first, then quiet, then obvious.
+
+## System extensions: minimal core, opt-in capabilities
+
+The other half of what makes Talos a gamechanger is how it handles "everything else". Because the core is intentionally tiny, anything beyond "run Kubernetes" is added through **system extensions** that get baked into the boot image at build time.
+
+Think of extensions as the answer to the question: "but I need X". Some of the ones I or people I know reach for:
+
+* **`iscsi-tools`** and **`util-linux-tools`** — needed for iSCSI-based storage like Piraeus / LINSTOR.
+* **`drbd`** — kernel module for replicated block storage with LINSTOR.
+* **NVIDIA / Intel GPU drivers** — for GPU workloads, transcoding, or local ML inference.
+* **`intel-ucode` / `amd-ucode`** — CPU microcode updates baked into the image.
+* **`qemu-guest-agent`** — if you're running Talos as a VM on Proxmox or similar.
+* **`zfs`** — for ZFS-backed storage.
+* **`tailscale`** — for cross-site networking.
+
+You don't `apt install` any of this. You don't run a script on the node. You declare which extensions you want, and Talos's [Image Factory](https://factory.talos.systems) builds a custom boot image that includes them. The extensions become part of the immutable image, just like the kernel.
+
+That's it. That's the whole model. Tiny core, declarative list of extensions, custom image. Once you internalise it, "how do I install X on the node?" stops being a question. The answer is always: add the extension to the schematic, rebuild the image, upgrade the node to the new image. Same flow every time, no matter what X is.
+
+Here's an example schematic — the YAML that tells the Image Factory which extensions to bake in:
+
+```yaml
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/iscsi-tools
+      - siderolabs/util-linux-tools
+      - siderolabs/intel-ucode
+      - siderolabs/i915-ucode
+      - siderolabs/qemu-guest-agent
+```
+
+You POST this to the Image Factory and get back a schematic ID — a long hex string that represents this exact extension set. That ID then goes into your image URL.
+
+```bash
+curl -X POST --data-binary @schematic.yaml https://factory.talos.systems/schematics
+# {"id":"376567988e75d96c6f9f96e6c07f83b80beae62e5c1b6c4b3b9e8b22ad9f1234"}
+```
+
+Save that ID — you'll need it twice. Once to download the boot image, and once inside your machine config to tell the installer which image to use for upgrades.
+
+## My setup
+
+Three mini-PCs sit on a shelf next to my desk. Each one has a 6-core CPU, 500 GB NVMe SSD, and a single 1 Gb NIC. They're identical, which is the whole point — three interchangeable nodes that all run the control plane and also schedule workloads. There's no "special" node. If one dies, the cluster keeps running.
+
+This is *my* environment. None of it is a Talos requirement. People run Talos on Raspberry Pis, on bare metal in datacenters, on cloud VMs, on Proxmox. The model doesn't care.
+
+There is one hardware lesson I want to save you from learning the hard way: **don't start with 16 GB of RAM**. The mini-PCs I bought shipped with 16 GB each, and that felt generous on day one when the cluster was just nodes and a CNI. Then I added cert-manager. Then ingress. Then Cilium with Hubble. Then Keycloak for SSO. Then Forgejo for Git. Then observability — Prometheus, Loki, Grafana. By the time the platform layer was actually doing something useful, I was right up against the memory ceiling and watching the kubelet evict things during peak.
+
+I upgraded all three to 32 GB and the problem went away. If you're sizing nodes today, save yourself the second purchase and go to 32 GB or more from day one. Memory is the constraint that bites first in a homelab Kubernetes cluster, every time.
+
+## Build a custom Talos image
+
+Time for the practical part. The first thing you need is a boot image with your extensions baked in.
+
+Save the schematic from earlier as `schematic.yaml`, then ask the Image Factory for a schematic ID:
+
+```bash
+curl -X POST --data-binary @schematic.yaml \
+  https://factory.talos.systems/schematics
+```
+
+You'll get back JSON with an `id` field. Pretend the ID is `abc123` for the rest of this post — substitute your real one.
+
+Now you have two ways to get Talos onto your hardware:
+
+* **ISO**, for one-off installs or PXE-less environments. Burn it to a USB stick, boot the node from it, and it'll run Talos in maintenance mode (no config applied yet). This is what I use at home.
+* **Installer image**, used for upgrades after the initial install. Talos pulls this image when you run `talosctl upgrade`.
+
+The URLs follow a simple pattern. For the ISO:
+
+```
+https://factory.talos.systems/image/abc123/v1.9.0/metal-amd64.iso
+```
+
+For the installer image (referenced inside the machine config):
+
+```
+factory.talos.systems/installer/abc123:v1.9.0
+```
+
+Download the ISO, write it to a USB stick with `dd` or your tool of choice, and boot all three nodes from it. They'll come up in maintenance mode with a temporary IP from DHCP, listening for a machine config on port 50000. That's all they do until you tell them more.
